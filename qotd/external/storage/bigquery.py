@@ -1,4 +1,4 @@
-"""BigQuery-backed state for QOTD workflows."""
+"""BigQuery-backed state adapter for QOTD workflows."""
 
 from __future__ import annotations
 
@@ -7,14 +7,15 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from qotd.auth import build_oauth_credentials
-from qotd.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
+from qotd.external.auth.gcp import build_oauth_credentials
+from qotd.external.storage.core import StorageClient
+from qotd.domain.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 
 
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 
 
-class BigQueryStateStore:
+class BQAdapter(StorageClient):
     """BigQuery-backed append-only QOTD state store."""
 
     def __init__(self, *, project_id: str, dataset: str, client: Any) -> None:
@@ -31,8 +32,8 @@ class BigQueryStateStore:
         oauth_client_id: str,
         oauth_client_secret: str,
         oauth_refresh_token: str,
-    ) -> BigQueryStateStore:
-        """Build a BigQuery state store from OAuth user credentials."""
+    ) -> BQAdapter:
+        """Build a BigQuery state adapter from OAuth user credentials."""
 
         bigquery = importlib.import_module("google.cloud.bigquery")
         credentials = build_oauth_credentials(
@@ -230,3 +231,26 @@ class BigQueryStateStore:
             f"SELECT * FROM `{self.table('correct_answer_updates')}` {where_clause} ORDER BY created_at",
             parameters,
         )
+
+
+def build_bigquery_state_store(
+    *,
+    project_id: str,
+    dataset: str,
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_refresh_token: str,
+) -> BQAdapter:
+    """Build the production BigQuery state store."""
+
+    if not project_id:
+        raise ValueError("Google Cloud project is required")
+    if not dataset:
+        raise ValueError("BigQuery dataset is required")
+    return BQAdapter.from_oauth(
+        project_id=project_id,
+        dataset=dataset,
+        oauth_client_id=oauth_client_id,
+        oauth_client_secret=oauth_client_secret,
+        oauth_refresh_token=oauth_refresh_token,
+    )

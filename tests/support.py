@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from qotd.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
+from qotd.domain.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
+from qotd.external.storage.core import StorageClient
 
 
-class InMemoryStateStore:
-    """Test-only StateStore implementation."""
+class InMemoryStateStore(StorageClient):
+    """Test-only storage client implementation."""
 
     def __init__(self) -> None:
         self.question_records: list[dict[str, Any]] = []

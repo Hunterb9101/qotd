@@ -6,9 +6,9 @@ import argparse
 import os
 from datetime import date
 
-from qotd.external.storage.state_factory import build_bigquery_state_store
-from qotd.workflows.score.main import ScoreResponsesConfig, score_responses
-from qotd.workflows.question.main import SendQuestionConfig, send_question
+from qotd.external.storage.bigquery import build_bigquery_state_store
+from qotd.usecases.score_responses import ScoreResponsesConfig, score_responses
+from qotd.usecases.send_question import SendQuestionConfig, send_question
 
 
 DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"

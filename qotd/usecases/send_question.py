@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from qotd.external.contacts.contacts import fetch_contact_group_email_addresses, normalize_email_addresses
-from qotd.external.email.emailing import build_participant_email, send_gmail_message
-from qotd.generator import generate_placeholder_question
-from qotd.models import StoredQuestion
-from qotd.external.storage.storage import StateStore
-from qotd.validation import validate_question
+from qotd.domain.contacts import normalize_email_addresses
+from qotd.domain.generator import generate_placeholder_question
+from qotd.domain.models import StoredQuestion
+from qotd.domain.validation import validate_question
+from qotd.external.contacts.google import fetch_contact_group_email_addresses
+from qotd.external.email.gmail import send_gmail_message
+from qotd.external.storage.core import StorageClient
+from qotd.presentation.emails import build_participant_email
 
 
 @dataclass(frozen=True)
@@ -24,7 +26,7 @@ class SendQuestionConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StateStore
+    state_store: StorageClient
     participant_emails: tuple[str, ...] = ()
     dry_run: bool = False
 

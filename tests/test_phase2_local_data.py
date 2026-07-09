@@ -5,9 +5,9 @@ import unittest
 from datetime import date, datetime
 from email.message import EmailMessage
 
-from qotd.dates import answer_cutoff_at, monthly_series, next_scoring_day, previous_game_day
-from qotd.external.email.email_parsing import build_reply_candidate, parse_gmail_message, parse_rfc822_message
-from qotd.models import MonthlyScore, ReplyProcessingRecord
+from qotd.domain.dates import answer_cutoff_at, monthly_series, next_scoring_day, previous_game_day
+from qotd.domain.models import MonthlyScore, ReplyProcessingRecord
+from qotd.external.email.gmail import GmailAdapter
 from tests.support import InMemoryStateStore
 
 
@@ -65,8 +65,8 @@ class Phase2LocalDataTests(unittest.TestCase):
         message["Date"] = "Thu, 9 Jul 2026 06:45:00 -0600"
         message.set_content(" B \n\nOn Thu, QOTD wrote:\n> old question")
 
-        parsed = parse_rfc822_message(message)
-        reply = build_reply_candidate(parsed, game_date="2026-07-08")
+        parsed = GmailAdapter.parse_rfc822_message(message)
+        reply = GmailAdapter.build_reply_candidate(parsed, game_date="2026-07-08")
 
         self.assertEqual(parsed.sender_email, "player@example.com")
         self.assertEqual(parsed.body_text, "B")
@@ -96,7 +96,7 @@ class Phase2LocalDataTests(unittest.TestCase):
             },
         }
 
-        parsed = parse_gmail_message(message)
+        parsed = GmailAdapter.parse_gmail_message(message)
 
         self.assertEqual(parsed.message_id, "gmail-1")
         self.assertEqual(parsed.thread_id, "thread-1")

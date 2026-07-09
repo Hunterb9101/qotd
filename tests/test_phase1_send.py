@@ -5,12 +5,13 @@ from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from qotd.auth import GOOGLE_TOKEN_URI, build_oauth_credentials
-from qotd.external.email.emailing import build_participant_email
-from qotd.external.contacts.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
-from qotd.generator import generate_placeholder_question
-from qotd.validation import validate_question
-from qotd.workflows.question import SendQuestionConfig, send_question
+from qotd.domain.contacts import normalize_email_addresses
+from qotd.domain.generator import generate_placeholder_question
+from qotd.domain.validation import validate_question
+from qotd.external.auth.gcp import GOOGLE_TOKEN_URI, build_oauth_credentials
+from qotd.external.contacts.google import extract_email_addresses, find_contact_group
+from qotd.presentation.emails import build_participant_email
+from qotd.usecases.send_question import SendQuestionConfig, send_question
 from tests.support import InMemoryStateStore
 
 
@@ -86,7 +87,7 @@ class Phase1SendTests(unittest.TestCase):
                 self.token_uri = kwargs["token_uri"]
 
         fake_module = SimpleNamespace(Credentials=FakeCredentials)
-        with patch("qotd.auth.importlib.import_module", return_value=fake_module):
+        with patch("qotd.external.auth.gcp.importlib.import_module", return_value=fake_module):
             credentials = build_oauth_credentials(
                 client_id="client-id",
                 client_secret="client-secret",

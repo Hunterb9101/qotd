@@ -1,0 +1,42 @@
+QOTD scoring update for {{ question.game_date }}
+
+Question:
+{{ question.prompt }}
+
+Correct answer: {{ question.correct_option }}. {{ question.options[question.correct_option] }}
+Source: {{ question.source_url }}
+
+Correct replies:
+{% for reply in result.correct -%}
+- {{ reply.email }}
+{% else -%}
+- None
+{% endfor %}
+
+Incorrect replies:
+{% for reply in result.incorrect -%}
+- {{ reply.email }}: {{ reply.interpreted_option }}
+{% else -%}
+- None
+{% endfor %}
+
+Needs review:
+{% for reply in result.needs_review -%}
+- {{ reply.email }}: {{ reply.interpreted_option }}
+{% else -%}
+- None
+{% endfor %}
+
+Current standings:
+{% for score in result.standings -%}
+- {{ score.email }}: {{ score.points }}
+{% else -%}
+- None
+{% endfor %}
+{% if result.skipped_processing_keys %}
+
+Skipped already-processed replies:
+{% for key in result.skipped_processing_keys -%}
+- {{ key }}
+{% endfor %}
+{% endif %}

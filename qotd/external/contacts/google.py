@@ -1,4 +1,4 @@
-"""Google Contacts lookup for QOTD participants."""
+"""Google People API contacts adapter."""
 
 from __future__ import annotations
 
@@ -6,26 +6,24 @@ import importlib
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from qotd.auth import build_oauth_credentials
+from qotd.domain.contacts import normalize_email_addresses
+from qotd.external.auth.gcp import build_oauth_credentials
+from qotd.external.contacts.core import ContactsClient
 
 
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
 MAX_BATCH_GET_PEOPLE = 200
 
 
-def normalize_email_addresses(email_addresses: Iterable[str]) -> list[str]:
-    """Normalize, dedupe, and sort email addresses."""
+def chunked(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
+    """Yield fixed-size chunks from a sequence."""
 
-    normalized = {
-        email_address.strip().lower()
-        for email_address in email_addresses
-        if email_address.strip()
-    }
-    return sorted(normalized)
+    for index in range(0, len(values), size):
+        yield values[index : index + size]
 
 
 def find_contact_group(contact_groups: Sequence[dict[str, Any]], group_name: str) -> dict[str, Any]:
-    """Find one contact group by exact display name."""
+    """Find one Google contact group by exact display name."""
 
     matches = [group for group in contact_groups if group.get("name") == group_name]
     if not matches:
@@ -46,13 +44,6 @@ def extract_email_addresses(people_responses: Sequence[dict[str, Any]]) -> list[
             if isinstance(value, str):
                 email_addresses.append(value)
     return normalize_email_addresses(email_addresses)
-
-
-def chunked(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
-    """Yield fixed-size chunks from a sequence."""
-
-    for index in range(0, len(values), size):
-        yield values[index : index + size]
 
 
 def build_people_service(
@@ -105,6 +96,57 @@ def fetch_people_email_addresses(service: Any, resource_names: Sequence[str]) ->
     return extract_email_addresses(responses)
 
 
+class GoogleContactsAdapter(ContactsClient):
+    """Google People API implementation of participant contact lookup."""
+
+    def __init__(self, *, service: Any) -> None:
+        self.service = service
+
+    @classmethod
+    def from_oauth(
+        cls,
+        *,
+        oauth_client_id: str,
+        oauth_client_secret: str,
+        oauth_refresh_token: str,
+    ) -> GoogleContactsAdapter:
+        """Build a Google contacts adapter from OAuth user credentials."""
+
+        return cls(
+            service=build_people_service(
+                oauth_client_id=oauth_client_id,
+                oauth_client_secret=oauth_client_secret,
+                oauth_refresh_token=oauth_refresh_token,
+            )
+        )
+
+    def fetch_group_email_addresses(self, group_name: str) -> list[str]:
+        """Fetch participant email addresses from the authorized user's contact group."""
+
+        groups_response = (
+            self.service.contactGroups()
+            .list(pageSize=1000, groupFields="name,memberCount,metadata")
+            .execute()
+        )
+        group = find_contact_group(groups_response.get("contactGroups", []), group_name)
+        member_count = int(group.get("memberCount", 0))
+        if member_count < 1:
+            raise RuntimeError(f"Contact group has no members: {group_name}")
+
+        resource_name = group.get("resourceName")
+        if not isinstance(resource_name, str) or not resource_name:
+            raise RuntimeError(f"Contact group is missing a resourceName: {group_name}")
+
+        member_resource_names = fetch_group_member_resource_names(self.service, resource_name, member_count)
+        if not member_resource_names:
+            raise RuntimeError(f"Contact group has no member resource names: {group_name}")
+
+        email_addresses = fetch_people_email_addresses(self.service, member_resource_names)
+        if not email_addresses:
+            raise RuntimeError(f"Contact group has no member email addresses: {group_name}")
+        return email_addresses
+
+
 def fetch_contact_group_email_addresses(
     *,
     oauth_client_id: str,
@@ -114,30 +156,8 @@ def fetch_contact_group_email_addresses(
 ) -> list[str]:
     """Fetch participant email addresses from the authorized user's contact group."""
 
-    service = build_people_service(
+    return GoogleContactsAdapter.from_oauth(
         oauth_client_id=oauth_client_id,
         oauth_client_secret=oauth_client_secret,
         oauth_refresh_token=oauth_refresh_token,
-    )
-    groups_response = (
-        service.contactGroups()
-        .list(pageSize=1000, groupFields="name,memberCount,metadata")
-        .execute()
-    )
-    group = find_contact_group(groups_response.get("contactGroups", []), group_name)
-    member_count = int(group.get("memberCount", 0))
-    if member_count < 1:
-        raise RuntimeError(f"Contact group has no members: {group_name}")
-
-    resource_name = group.get("resourceName")
-    if not isinstance(resource_name, str) or not resource_name:
-        raise RuntimeError(f"Contact group is missing a resourceName: {group_name}")
-
-    member_resource_names = fetch_group_member_resource_names(service, resource_name, member_count)
-    if not member_resource_names:
-        raise RuntimeError(f"Contact group has no member resource names: {group_name}")
-
-    email_addresses = fetch_people_email_addresses(service, member_resource_names)
-    if not email_addresses:
-        raise RuntimeError(f"Contact group has no member email addresses: {group_name}")
-    return email_addresses
+    ).fetch_group_email_addresses(group_name)

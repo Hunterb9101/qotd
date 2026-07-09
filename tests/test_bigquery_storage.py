@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from qotd.external.storage.bigquery_storage import BigQueryStateStore
-from qotd.models import ReplyProcessingRecord, StoredQuestion
+from qotd.domain.models import ReplyProcessingRecord, StoredQuestion
+from qotd.external.storage.bigquery import BQAdapter
 
 
 class FakeLoadJob:
@@ -46,9 +46,9 @@ FAKE_BIGQUERY_MODULE = SimpleNamespace(
 class BigQueryStorageTests(unittest.TestCase):
     def test_append_question_record_writes_to_questions_table(self) -> None:
         client = FakeBigQueryClient()
-        store = BigQueryStateStore(project_id="project-id", dataset="qotd", client=client)
+        store = BQAdapter(project_id="project-id", dataset="qotd", client=client)
 
-        with patch("qotd.bigquery_storage.importlib.import_module", return_value=FAKE_BIGQUERY_MODULE):
+        with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=FAKE_BIGQUERY_MODULE):
             store.append_question_record(
                 StoredQuestion(
                     game_date="2026-07-09",
@@ -71,9 +71,9 @@ class BigQueryStorageTests(unittest.TestCase):
 
     def test_append_reply_processing_record_includes_interpreted_option(self) -> None:
         client = FakeBigQueryClient()
-        store = BigQueryStateStore(project_id="project-id", dataset="qotd", client=client)
+        store = BQAdapter(project_id="project-id", dataset="qotd", client=client)
 
-        with patch("qotd.bigquery_storage.importlib.import_module", return_value=FAKE_BIGQUERY_MODULE):
+        with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=FAKE_BIGQUERY_MODULE):
             store.append_reply_processing_record(
                 ReplyProcessingRecord(
                     game_date="2026-07-09",

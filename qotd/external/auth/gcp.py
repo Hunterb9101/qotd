@@ -1,4 +1,4 @@
-"""Google OAuth credential helpers."""
+"""Google Cloud and Google API OAuth credential helpers."""
 
 from __future__ import annotations
 

@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from qotd.dates import monthly_series
-from qotd.external.email.email_parsing import ReplyCandidate
-from qotd.models import MonthlyScore, ReplyProcessingRecord, StoredQuestion
-from qotd.external.storage.storage import StateStore
+from qotd.domain.dates import monthly_series
+from qotd.domain.models import MonthlyScore, ReplyCandidate, ReplyProcessingRecord, StoredQuestion
 
 
 ANSWER_RE = re.compile(r"^[A-D]$", re.IGNORECASE)
@@ -36,6 +34,14 @@ class ScoredReply:
 
 
 @dataclass(frozen=True)
+class ReplyProcessingUpdate:
+    """Reply-processing record plus derived interpretation metadata."""
+
+    record: ReplyProcessingRecord
+    interpreted_option: str | None
+
+
+@dataclass(frozen=True)
 class ScoringResult:
     """Result of scoring one QOTD game day."""
 
@@ -45,6 +51,8 @@ class ScoringResult:
     needs_review: tuple[ScoredReply, ...]
     skipped_processing_keys: tuple[str, ...]
     standings: tuple[MonthlyScore, ...]
+    monthly_score_updates: tuple[MonthlyScore, ...] = ()
+    reply_processing_updates: tuple[ReplyProcessingUpdate, ...] = ()
 
 
 def parse_deterministic_answer(body_text: str) -> AnswerInterpretation:
@@ -130,21 +138,24 @@ def score_replies(
     replies: list[ReplyCandidate],
     cutoff_at: datetime,
     processed_at: datetime,
-    state_store: StateStore,
+    existing_reply_processing_records: list[dict[str, Any]] | None = None,
+    existing_monthly_score_records: list[dict[str, Any]] | None = None,
     interpret_answer: Callable[[str], AnswerInterpretation] = parse_deterministic_answer,
 ) -> ScoringResult:
-    """Score latest eligible replies and persist idempotent score state."""
+    """Score latest eligible replies and return persistence updates."""
 
     selected_replies = select_latest_eligible_replies(replies, cutoff_at=cutoff_at)
-    existing_keys = processed_keys(state_store.read_reply_processing_records(game_date=question.game_date))
+    existing_keys = processed_keys(existing_reply_processing_records or [])
     game_date = parse_iso_datetime(f"{question.game_date}T00:00:00+00:00").date()
     series = monthly_series(game_date)
-    scores = latest_score_map(state_store.read_monthly_scores(series=series), series=series)
+    scores = latest_score_map(existing_monthly_score_records or [], series=series)
 
     correct: list[ScoredReply] = []
     incorrect: list[ScoredReply] = []
     needs_review: list[ScoredReply] = []
     skipped_keys: list[str] = []
+    monthly_score_updates: list[MonthlyScore] = []
+    reply_processing_updates: list[ReplyProcessingUpdate] = []
 
     for email, reply in sorted(selected_replies.items()):
         processing_key = reply.processing_key
@@ -172,17 +183,19 @@ def score_replies(
             incorrect.append(scored_reply)
 
         scores[email] = scores.get(email, 0) + points_awarded
-        state_store.append_monthly_score(MonthlyScore(series=series, email=email, points=scores[email]))
-        state_store.append_reply_processing_record(
-            ReplyProcessingRecord(
-                game_date=question.game_date,
-                email=email,
-                latest_gmail_message_id=reply.gmail_message_id,
-                points_awarded=points_awarded,
-                needs_audit=interpretation.needs_review,
-                processed_at=processed_at.isoformat(),
-            ),
-            interpreted_option=interpretation.option,
+        monthly_score_updates.append(MonthlyScore(series=series, email=email, points=scores[email]))
+        reply_processing_updates.append(
+            ReplyProcessingUpdate(
+                record=ReplyProcessingRecord(
+                    game_date=question.game_date,
+                    email=email,
+                    latest_gmail_message_id=reply.gmail_message_id,
+                    points_awarded=points_awarded,
+                    needs_audit=interpretation.needs_review,
+                    processed_at=processed_at.isoformat(),
+                ),
+                interpreted_option=interpretation.option,
+            )
         )
 
     return ScoringResult(
@@ -192,51 +205,6 @@ def score_replies(
         needs_review=tuple(needs_review),
         skipped_processing_keys=tuple(skipped_keys),
         standings=standings_from_scores(series, scores),
+        monthly_score_updates=tuple(monthly_score_updates),
+        reply_processing_updates=tuple(reply_processing_updates),
     )
-
-
-def build_organizer_update_body(question: StoredQuestion, result: ScoringResult) -> str:
-    """Build the organizer-only scoring update body."""
-
-    correct_answer = f"{question.correct_option}. {question.options[question.correct_option]}"
-    lines = [
-        f"QOTD scoring update for {question.game_date}",
-        "",
-        "Question:",
-        question.prompt,
-        "",
-        f"Correct answer: {correct_answer}",
-        f"Source: {question.source_url}",
-        "",
-        "Correct replies:",
-    ]
-    lines.extend(f"- {reply.email} ({reply.gmail_message_id})" for reply in result.correct)
-    if not result.correct:
-        lines.append("- None")
-
-    lines.extend(["", "Incorrect replies:"])
-    lines.extend(
-        f"- {reply.email}: {reply.interpreted_option} ({reply.gmail_message_id})"
-        for reply in result.incorrect
-    )
-    if not result.incorrect:
-        lines.append("- None")
-
-    lines.extend(["", "Needs review:"])
-    lines.extend(
-        f"- {reply.email}: {reply.interpreted_option} ({reply.gmail_message_id})"
-        for reply in result.needs_review
-    )
-    if not result.needs_review:
-        lines.append("- None")
-
-    lines.extend(["", "Current standings:"])
-    lines.extend(f"- {score.email}: {score.points}" for score in result.standings)
-    if not result.standings:
-        lines.append("- None")
-
-    if result.skipped_processing_keys:
-        lines.extend(["", "Skipped already-processed replies:"])
-        lines.extend(f"- {key}" for key in result.skipped_processing_keys)
-
-    return "\n".join(lines)

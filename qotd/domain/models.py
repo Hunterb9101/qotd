@@ -99,6 +99,23 @@ class ReplyProcessingRecord:
 
 
 @dataclass(frozen=True)
+class ReplyCandidate:
+    """Reply data that can later be interpreted and scored."""
+
+    game_date: str
+    sender_email: str
+    gmail_message_id: str
+    received_at: str
+    body_text: str
+
+    @property
+    def processing_key(self) -> str:
+        """Return an idempotency key for this sender and game date."""
+
+        return f"{self.game_date}:{self.sender_email}"
+
+
+@dataclass(frozen=True)
 class ManualAdjustment:
     """Persisted manual score adjustment."""
 

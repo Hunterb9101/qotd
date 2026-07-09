@@ -6,16 +6,17 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
-from qotd.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
-from qotd.external.email.email_parsing import ReplyCandidate, build_reply_candidate, parse_gmail_message
-from qotd.external.email.emailing import build_organizer_email, send_gmail_message
-from qotd.external.email.gmail import search_messages
-from qotd.models import StoredQuestion
-from qotd.scoring import ScoringResult, build_organizer_update_body, parse_iso_datetime, score_replies
-from qotd.external.storage.storage import StateStore
+from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
+from qotd.domain.models import ReplyCandidate, StoredQuestion
+from qotd.domain.scoring import ScoringResult, parse_iso_datetime, score_replies
+from qotd.external.email.core import ParsedEmailMessage
+from qotd.external.email.gmail import GmailAdapter, search_messages, send_gmail_message
+from qotd.external.storage.core import StorageClient
+from qotd.presentation.emails import build_organizer_email
+from qotd.presentation.organizer_updates import build_organizer_update_body
 
 
-MessageFetcher = Callable[[str], list[dict[str, Any]]]
+MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class ScoreResponsesConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StateStore
+    state_store: StorageClient
     game_date: date | None = None
     dry_run: bool = False
 
@@ -68,7 +69,7 @@ def question_from_record(record: dict[str, Any]) -> StoredQuestion:
     )
 
 
-def load_question_for_game_date(state_store: StateStore, game_date: date) -> StoredQuestion:
+def load_question_for_game_date(state_store: StorageClient, game_date: date) -> StoredQuestion:
     """Load the latest stored question for a game date."""
 
     game_date_text = game_date.isoformat()
@@ -92,23 +93,22 @@ def gmail_reply_query(*, game_date: date, scoring_date: date) -> str:
 
 
 def collect_reply_candidates(
-    messages: list[dict[str, Any]],
+    messages: list[ParsedEmailMessage],
     *,
     question: StoredQuestion,
     sender: str,
 ) -> list[ReplyCandidate]:
-    """Parse Gmail messages into reply candidates for a question."""
+    """Convert parsed messages into reply candidates for a question."""
 
     question_sent_at = parse_iso_datetime(question.created_at)
     candidates: list[ReplyCandidate] = []
-    for message in messages:
-        parsed = parse_gmail_message(message)
+    for parsed in messages:
         if parsed.sender_email == sender.lower():
             continue
         if parsed.sent_at is not None and parsed.sent_at.replace(tzinfo=parsed.sent_at.tzinfo or UTC) <= question_sent_at:
             continue
         try:
-            candidates.append(build_reply_candidate(parsed, game_date=question.game_date))
+            candidates.append(GmailAdapter.build_reply_candidate(parsed, game_date=question.game_date))
         except ValueError:
             continue
     return candidates
@@ -131,7 +131,7 @@ def score_responses(
     question = load_question_for_game_date(config.state_store, game_date)
     query = gmail_reply_query(game_date=game_date, scoring_date=scoring_date)
     if fetch_messages is None:
-        def fetch_messages(gmail_query: str) -> list[dict[str, Any]]:
+        def fetch_messages(gmail_query: str) -> list[ParsedEmailMessage]:
             return search_messages(
                 user_id=config.gmail_user,
                 oauth_client_id=config.oauth_client_id,
@@ -146,8 +146,17 @@ def score_responses(
         replies=replies,
         cutoff_at=answer_cutoff_at(scoring_date),
         processed_at=datetime.now(UTC),
-        state_store=config.state_store,
+        existing_reply_processing_records=config.state_store.read_reply_processing_records(game_date=question.game_date),
+        existing_monthly_score_records=config.state_store.read_monthly_scores(),
     )
+    for score_record in scoring.monthly_score_updates:
+        config.state_store.append_monthly_score(score_record)
+    for processing_update in scoring.reply_processing_updates:
+        config.state_store.append_reply_processing_record(
+            processing_update.record,
+            interpreted_option=processing_update.interpreted_option,
+        )
+
     body = build_organizer_update_body(question, scoring)
     if config.dry_run:
         organizer_message_id = f"dry-run:{game_date.isoformat()}"

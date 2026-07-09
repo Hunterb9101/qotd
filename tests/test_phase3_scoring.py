@@ -3,16 +3,16 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 
-from qotd.external.email.email_parsing import ReplyCandidate
-from qotd.models import MonthlyScore, StoredQuestion
-from qotd.scoring import (
+from qotd.domain.models import MonthlyScore, ReplyCandidate, StoredQuestion
+from qotd.domain.scoring import (
     AnswerInterpretation,
-    build_organizer_update_body,
+    ScoringResult,
     parse_deterministic_answer,
     score_replies,
     select_latest_eligible_replies,
 )
-from qotd.external.email.emailing import build_organizer_email
+from qotd.presentation.emails import build_organizer_email
+from qotd.presentation.organizer_updates import build_organizer_update_body
 from tests.support import InMemoryStateStore
 
 
@@ -30,6 +30,18 @@ def stored_question() -> StoredQuestion:
         gmail_message_id="question-1",
         created_at="2026-07-09T18:00:00+00:00",
     )
+
+
+def persist_scoring_updates(store: InMemoryStateStore, result: ScoringResult) -> None:
+    """Persist scoring updates produced by domain scoring."""
+
+    for score_record in result.monthly_score_updates:
+        store.append_monthly_score(score_record)
+    for processing_update in result.reply_processing_updates:
+        store.append_reply_processing_record(
+            processing_update.record,
+            interpreted_option=processing_update.interpreted_option,
+        )
 
 
 class Phase3ScoringTests(unittest.TestCase):
@@ -103,15 +115,18 @@ class Phase3ScoringTests(unittest.TestCase):
             question=question,
             replies=replies,
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
-            state_store=store,
             processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
+            existing_reply_processing_records=store.read_reply_processing_records(game_date=question.game_date),
+            existing_monthly_score_records=store.read_monthly_scores(),
         )
+        persist_scoring_updates(store, result)
         rerun = score_replies(
             question=question,
             replies=replies,
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
-            state_store=store,
             processed_at=datetime.fromisoformat("2026-07-10T14:05:00+00:00"),
+            existing_reply_processing_records=store.read_reply_processing_records(game_date=question.game_date),
+            existing_monthly_score_records=store.read_monthly_scores(),
         )
 
         self.assertEqual([reply.email for reply in result.correct], ["correct@example.com"])
@@ -140,8 +155,9 @@ class Phase3ScoringTests(unittest.TestCase):
                 )
             ],
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
-            state_store=store,
             processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
+            existing_reply_processing_records=store.read_reply_processing_records(game_date=stored_question().game_date),
+            existing_monthly_score_records=store.read_monthly_scores(),
         )
 
         self.assertEqual(result.standings[0].points, 5)
@@ -159,7 +175,6 @@ class Phase3ScoringTests(unittest.TestCase):
                 )
             ],
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
-            state_store=InMemoryStateStore(),
             processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
             interpret_answer=lambda _text: AnswerInterpretation(option="B", needs_review=False),
         )
@@ -179,7 +194,6 @@ class Phase3ScoringTests(unittest.TestCase):
                 )
             ],
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
-            state_store=InMemoryStateStore(),
             processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
         )
 

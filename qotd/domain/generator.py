@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from qotd.models import Question
+from qotd.domain.models import Question
 
 
 def generate_placeholder_question(game_date: str) -> Question:
@@ -21,4 +21,3 @@ def generate_placeholder_question(game_date: str) -> Question:
         source_note="NASA describes Jupiter's Great Red Spot as a long-lived storm.",
         source_url="https://science.nasa.gov/jupiter/jupiter-facts/",
     )
-

@@ -4,8 +4,10 @@ import base64
 import unittest
 from datetime import date, datetime
 
-from qotd.models import StoredQuestion
-from qotd.workflows.score import (
+from qotd.domain.models import StoredQuestion
+from qotd.external.email.core import ParsedEmailMessage
+from qotd.external.email.gmail import GmailAdapter
+from qotd.usecases.score_responses import (
     ScoreResponsesConfig,
     collect_reply_candidates,
     gmail_reply_query,
@@ -60,6 +62,25 @@ def gmail_message(
     }
 
 
+def parsed_gmail_message(
+    *,
+    message_id: str,
+    sender: str,
+    body: str,
+    sent_at: datetime,
+) -> ParsedEmailMessage:
+    """Build a parsed Gmail API message fixture."""
+
+    return GmailAdapter.parse_gmail_message(
+        gmail_message(
+            message_id=message_id,
+            sender=sender,
+            body=body,
+            sent_at=sent_at,
+        )
+    )
+
+
 class ResponseWorkflowTests(unittest.TestCase):
     def test_gmail_reply_query_uses_game_and_scoring_dates(self) -> None:
         query = gmail_reply_query(game_date=date(2026, 7, 9), scoring_date=date(2026, 7, 10))
@@ -68,19 +89,19 @@ class ResponseWorkflowTests(unittest.TestCase):
 
     def test_collect_reply_candidates_excludes_sender_and_presend_messages(self) -> None:
         messages = [
-            gmail_message(
+            parsed_gmail_message(
                 message_id="sent-question",
                 sender="***SECRET***",
                 body="Question",
                 sent_at=datetime.fromisoformat("2026-07-09T18:01:00+00:00"),
             ),
-            gmail_message(
+            parsed_gmail_message(
                 message_id="too-early",
                 sender="player@example.com",
                 body="B",
                 sent_at=datetime.fromisoformat("2026-07-09T17:00:00+00:00"),
             ),
-            gmail_message(
+            parsed_gmail_message(
                 message_id="reply-1",
                 sender="player@example.com",
                 body="B",
@@ -110,7 +131,7 @@ class ResponseWorkflowTests(unittest.TestCase):
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
-                gmail_message(
+                parsed_gmail_message(
                     message_id="reply-1",
                     sender="player@example.com",
                     body="B",
@@ -146,7 +167,7 @@ class ResponseWorkflowTests(unittest.TestCase):
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
-                gmail_message(
+                parsed_gmail_message(
                     message_id="reply-1",
                     sender="player@example.com",
                     body="B",

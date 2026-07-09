@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from qotd.models import OPTION_LABELS, Question
+from qotd.domain.models import OPTION_LABELS, Question
 
 
 def validate_question(question: Question) -> None:
@@ -29,4 +29,3 @@ def validate_question(question: Question) -> None:
 
     if not question.prompt.strip():
         raise ValueError("question prompt cannot be blank")
-

@@ -1,0 +1,5 @@
+{{ question.prompt }}
+
+{% for label in option_labels %}
+{{ label }}. {{ question.options[label] }}
+{% endfor %}
