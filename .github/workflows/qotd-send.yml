@@ -9,9 +9,9 @@ jobs:
   send-question:
     runs-on: ubuntu-latest
     env:
-      QOTD_MAILING_LIST: ${{ secrets.QOTD_MAILING_LIST }}
       QOTD_SENDER: ***SECRET***
       QOTD_DELEGATED_USER: ***SECRET***
+      QOTD_CONTACT_GROUP_NAME: QOTD Participants
       GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/qotd-service-account.json
       QOTD_STATE_PATH: state/questions.jsonl
     steps:
@@ -29,4 +29,3 @@ jobs:
 
       - name: Send generated QOTD
         run: python -m qotd send-question
-

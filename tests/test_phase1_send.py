@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from qotd.emailing import build_participant_email
+from qotd.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
 from qotd.generator import generate_placeholder_question
 from qotd.storage import read_question_records
 from qotd.validation import validate_question
@@ -23,9 +24,15 @@ class Phase1SendTests(unittest.TestCase):
 
     def test_participant_email_omits_answer_metadata(self) -> None:
         question = generate_placeholder_question("2026-07-09")
-        message = build_participant_email(question, "***SECRET***", "players@example.com")
+        message = build_participant_email(
+            question,
+            "***SECRET***",
+            ["one@example.com", "two@example.com"],
+        )
         body = message.get_content()
 
+        self.assertEqual(message["To"], "***SECRET***")
+        self.assertEqual(message["Bcc"], "one@example.com, two@example.com")
         self.assertIn(question.prompt, body)
         self.assertIn("A. Mars", body)
         self.assertIn("B. Jupiter", body)
@@ -33,6 +40,41 @@ class Phase1SendTests(unittest.TestCase):
         self.assertNotIn("Correct answer", body)
         self.assertNotIn(question.source_url, body)
         self.assertNotIn(question.source_note, body)
+
+    def test_contact_group_matching_uses_exact_name(self) -> None:
+        group = find_contact_group(
+            [
+                {"name": "QOTD Participants Archive", "resourceName": "contactGroups/1"},
+                {"name": "QOTD Participants", "resourceName": "contactGroups/2"},
+            ],
+            "QOTD Participants",
+        )
+
+        self.assertEqual(group["resourceName"], "contactGroups/2")
+
+    def test_extract_contact_email_addresses_normalizes_and_dedupes(self) -> None:
+        email_addresses = extract_email_addresses(
+            [
+                {
+                    "person": {
+                        "emailAddresses": [
+                            {"value": " First@example.com "},
+                            {"value": "first@EXAMPLE.com"},
+                        ]
+                    }
+                },
+                {"person": {"emailAddresses": [{"value": "second@example.com"}]}},
+                {"person": {"names": [{"displayName": "No Email"}]}},
+            ]
+        )
+
+        self.assertEqual(email_addresses, ["first@example.com", "second@example.com"])
+
+    def test_normalize_email_addresses_ignores_blank_values(self) -> None:
+        self.assertEqual(
+            normalize_email_addresses([" Person@example.com ", "", "person@example.com"]),
+            ["person@example.com"],
+        )
 
     def test_dry_run_send_persists_question_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -42,10 +84,11 @@ class Phase1SendTests(unittest.TestCase):
                 SendQuestionConfig(
                     game_date=date(2026, 7, 9),
                     sender="***SECRET***",
-                    mailing_list="players@example.com",
+                    contact_group_name="QOTD Participants",
                     state_path=state_path,
                     delegated_user="***SECRET***",
                     service_account_file="",
+                    participant_emails=("Player@example.com", "player@example.com"),
                     dry_run=True,
                 )
             )
@@ -56,6 +99,7 @@ class Phase1SendTests(unittest.TestCase):
             self.assertEqual(records[0]["gmail_message_id"], "dry-run:2026-07-09")
             self.assertEqual(records[0]["correct_option"], "B")
             self.assertIn(result.record.prompt, result.email_body)
+            self.assertEqual(result.recipient_count, 1)
 
 
 if __name__ == "__main__":

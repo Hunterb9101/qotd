@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import base64
 import importlib
+from collections.abc import Sequence
 from email.message import EmailMessage
 
 from qotd.models import OPTION_LABELS, Question
 
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
-def build_participant_email(question: Question, sender: str, recipient: str) -> EmailMessage:
+
+def build_participant_email(question: Question, sender: str, recipients: Sequence[str]) -> EmailMessage:
     """Build the participant-facing QOTD email without answer metadata."""
 
+    if not recipients:
+        raise ValueError("participant email must have at least one recipient")
+
     message = EmailMessage()
-    message["To"] = recipient
+    message["To"] = sender
+    message["Bcc"] = ", ".join(recipients)
     message["From"] = sender
     message["Subject"] = f"QOTD - {question.game_date}"
     lines = [
@@ -48,7 +55,7 @@ def send_gmail_message(
 
     credentials = service_account.Credentials.from_service_account_file(
         service_account_file,
-        scopes=["https://www.googleapis.com/auth/gmail.send"],
+        scopes=[GMAIL_SEND_SCOPE],
     ).with_subject(delegated_user)
     service = discovery.build("gmail", "v1", credentials=credentials, cache_discovery=False)
     response = (
@@ -61,4 +68,3 @@ def send_gmail_message(
     if not message_id:
         raise RuntimeError("Gmail API response did not include a message id")
     return str(message_id)
-

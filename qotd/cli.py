@@ -11,6 +11,7 @@ from qotd.workflow import SendQuestionConfig, send_question
 
 
 DEFAULT_STATE_PATH = Path("state/questions.jsonl")
+DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"
 
 
 def parse_date(value: str) -> date:
@@ -36,7 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     send_parser = subparsers.add_parser("send-question", help="Generate and send today's QOTD email")
     send_parser.add_argument("--date", type=parse_date, default=date.today())
-    send_parser.add_argument("--mailing-list", default=os.environ.get("QOTD_MAILING_LIST"))
+    send_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
+    send_parser.add_argument("--dry-run-recipient", action="append", default=[])
     send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
     send_parser.add_argument("--delegated-user", default=os.environ.get("QOTD_DELEGATED_USER", "***SECRET***"))
     send_parser.add_argument("--service-account-file", default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
@@ -52,24 +54,26 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "send-question":
-        mailing_list = args.mailing_list or env_value("QOTD_MAILING_LIST")
         service_account_file = args.service_account_file or ""
-        if not args.dry_run and not service_account_file:
+        if not service_account_file and not args.dry_run_recipient:
             service_account_file = env_value("GOOGLE_APPLICATION_CREDENTIALS")
 
         result = send_question(
             SendQuestionConfig(
                 game_date=args.date,
                 sender=args.sender,
-                mailing_list=mailing_list,
+                contact_group_name=args.contact_group_name,
                 state_path=args.state_path,
                 delegated_user=args.delegated_user,
                 service_account_file=service_account_file,
+                participant_emails=tuple(args.dry_run_recipient),
                 dry_run=args.dry_run,
             )
         )
-        print(f"Stored question for {result.record.game_date}: {result.record.gmail_message_id}")
+        print(
+            f"Stored question for {result.record.game_date}: "
+            f"{result.record.gmail_message_id} ({result.recipient_count} recipients)"
+        )
         if args.dry_run:
             print()
             print(result.email_body)
-
