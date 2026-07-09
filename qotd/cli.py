@@ -7,6 +7,12 @@ import os
 from datetime import date
 
 from qotd.external.storage.bigquery import build_bigquery_state_store
+from qotd.usecases.adjust_score import (
+    ProcessScoreAdjustmentEmailsConfig,
+    ScoreAdjustmentConfig,
+    apply_score_adjustment,
+    process_score_adjustment_emails,
+)
 from qotd.usecases.score_responses import ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 
@@ -78,6 +84,30 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
     add_google_options(score_parser)
     score_parser.add_argument("--dry-run", action="store_true")
+
+    adjust_parser = subparsers.add_parser("adjust-score", help="Apply a manual score adjustment")
+    adjust_parser.add_argument("--email", required=True)
+    period_group = adjust_parser.add_mutually_exclusive_group(required=True)
+    period_group.add_argument("--date", dest="game_date", type=parse_date)
+    period_group.add_argument("--series")
+    adjust_parser.add_argument("--points", dest="points_delta", type=int, required=True)
+    adjust_parser.add_argument("--reason", required=True)
+    adjust_parser.add_argument("--gmail-message-id", default="")
+    adjust_parser.add_argument("--idempotency-key", default=None)
+    add_google_options(adjust_parser)
+    adjust_parser.add_argument("--dry-run", action="store_true")
+
+    email_adjust_parser = subparsers.add_parser(
+        "process-score-adjustments",
+        help="Process score adjustment request emails",
+    )
+    email_adjust_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
+    email_adjust_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    email_adjust_parser.add_argument("--organizer", action="append", default=[])
+    email_adjust_parser.add_argument("--query", default='is:unread "Action: adjust-score"')
+    email_adjust_parser.add_argument("--max-results", type=int, default=25)
+    add_google_options(email_adjust_parser)
+    email_adjust_parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -150,3 +180,71 @@ def main() -> None:
         if args.dry_run:
             print()
             print(score_result.organizer_update_body)
+
+    elif args.command == "adjust-score":
+        require_google_options(args)
+        state_store = build_bigquery_state_store(
+            project_id=args.google_cloud_project,
+            dataset=args.bigquery_dataset,
+            oauth_client_id=args.oauth_client_id,
+            oauth_client_secret=args.oauth_client_secret,
+            oauth_refresh_token=args.oauth_refresh_token,
+        )
+
+        adjustment_result = apply_score_adjustment(
+            ScoreAdjustmentConfig(
+                email=args.email,
+                game_date=args.game_date,
+                series=args.series,
+                points_delta=args.points_delta,
+                reason=args.reason,
+                source_gmail_message_id=args.gmail_message_id,
+                idempotency_key=args.idempotency_key,
+                state_store=state_store,
+                dry_run=args.dry_run,
+            )
+        )
+        status = "Would apply" if args.dry_run and adjustment_result.applied else "Applied"
+        if not adjustment_result.applied:
+            status = "Skipped duplicate"
+        print(
+            f"{status} adjustment {adjustment_result.adjustment.idempotency_key}: "
+            f"{adjustment_result.monthly_score.email} is now "
+            f"{adjustment_result.monthly_score.points} points in {adjustment_result.monthly_score.series}"
+        )
+
+    elif args.command == "process-score-adjustments":
+        require_google_options(args)
+        state_store = build_bigquery_state_store(
+            project_id=args.google_cloud_project,
+            dataset=args.bigquery_dataset,
+            oauth_client_id=args.oauth_client_id,
+            oauth_client_secret=args.oauth_client_secret,
+            oauth_refresh_token=args.oauth_refresh_token,
+        )
+        organizers = tuple(args.organizer) or (
+            os.environ.get("QOTD_ORGANIZER")
+            or os.environ.get("QOTD_SENDER")
+            or "***SECRET***",
+        )
+
+        processing_result = process_score_adjustment_emails(
+            ProcessScoreAdjustmentEmailsConfig(
+                sender=args.sender,
+                gmail_user=args.gmail_user,
+                organizer_emails=organizers,
+                oauth_client_id=args.oauth_client_id,
+                oauth_client_secret=args.oauth_client_secret,
+                oauth_refresh_token=args.oauth_refresh_token,
+                state_store=state_store,
+                query=args.query,
+                max_results=args.max_results,
+                dry_run=args.dry_run,
+            )
+        )
+        print(
+            f"Processed {len(processing_result.processed)} score adjustment request emails "
+            f"for query: {processing_result.searched_query}"
+        )
+        for item in processing_result.processed:
+            print(f"- {item.message_id}: {item.status} ({item.response_message_id})")

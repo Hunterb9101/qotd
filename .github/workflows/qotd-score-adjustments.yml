@@ -1,0 +1,32 @@
+name: Process QOTD Score Adjustments
+
+on:
+  schedule:
+    - cron: "55 13 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  process-score-adjustments:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      QOTD_SENDER: ***SECRET***
+      QOTD_GMAIL_USER: ***SECRET***
+      QOTD_ORGANIZER: ***SECRET***
+      GOOGLE_CLOUD_PROJECT: question-of-the-day-501919
+      BIGQUERY_DATASET: qotd
+      GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+      GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Process score adjustment emails
+        run: python -m qotd process-score-adjustments --organizer "$QOTD_ORGANIZER"

@@ -21,6 +21,7 @@ from qotd.external.email.core import EmailClient, ParsedEmailMessage
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 ON_WROTE_RE = re.compile(r"^On .+ wrote:$")
 REPLY_HEADER_RE = re.compile(r"^-+Original Message-+$", re.IGNORECASE)
 MESSAGE_ID_FALLBACK = "unknown"
@@ -141,6 +142,24 @@ def send_gmail_message(
     ).send_message(message, user_id=user_id)
 
 
+def mark_gmail_message_read(
+    message_id: str,
+    *,
+    user_id: str,
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_refresh_token: str,
+) -> None:
+    """Remove the unread label from one Gmail message."""
+
+    GmailAdapter.from_oauth(
+        oauth_client_id=oauth_client_id,
+        oauth_client_secret=oauth_client_secret,
+        oauth_refresh_token=oauth_refresh_token,
+        scopes=[GMAIL_MODIFY_SCOPE, GMAIL_SEND_SCOPE],
+    ).mark_message_read(message_id, user_id=user_id)
+
+
 class GmailAdapter(EmailClient):
     """Gmail API implementation of email sending and search."""
 
@@ -180,6 +199,15 @@ class GmailAdapter(EmailClient):
         if not message_id:
             raise RuntimeError("Gmail API response did not include a message id")
         return str(message_id)
+
+    def mark_message_read(self, message_id: str, *, user_id: str) -> None:
+        """Remove the unread label from one Gmail message."""
+
+        self.service.users().messages().modify(
+            userId=user_id,
+            id=message_id,
+            body={"removeLabelIds": ["UNREAD"]},
+        ).execute()
 
     def read_message(self, message: dict[str, Any]) -> ParsedEmailMessage:
         """Read one Gmail API message into normalized email data."""
