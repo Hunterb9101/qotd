@@ -12,7 +12,6 @@ jobs:
       QOTD_SENDER: ***SECRET***
       QOTD_DELEGATED_USER: ***SECRET***
       QOTD_CONTACT_GROUP_NAME: QOTD Participants
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/qotd-service-account.json
       QOTD_STATE_PATH: state/questions.jsonl
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +24,10 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Write Google service account
-        run: printf '%s' '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
+        run: |
+          credentials_path="${RUNNER_TEMP}/qotd-service-account.json"
+          printf '%s' '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > "$credentials_path"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_path" >> "$GITHUB_ENV"
 
       - name: Send generated QOTD
         run: python -m qotd send-question
