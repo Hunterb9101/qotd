@@ -6,7 +6,7 @@ import argparse
 import os
 from datetime import date
 
-from qotd.response_workflow import ScoreResponsesConfig, score_responses, today_mountain
+from qotd.response_workflow import ScoreResponsesConfig, score_responses
 from qotd.state_factory import build_bigquery_state_store
 from qotd.workflow import SendQuestionConfig, send_question
 
@@ -72,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
+    score_parser.add_argument("--game-date", type=parse_date, default=None)
     score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
     score_parser.add_argument("--organizer", default=os.environ.get("QOTD_ORGANIZER", os.environ.get("QOTD_SENDER", "***SECRET***")))
     score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
@@ -130,7 +131,8 @@ def main() -> None:
 
         score_result = score_responses(
             ScoreResponsesConfig(
-                scoring_date=args.scoring_date or today_mountain(),
+                scoring_date=args.scoring_date,
+                game_date=args.game_date,
                 sender=args.sender,
                 organizer=args.organizer,
                 gmail_user=args.gmail_user,

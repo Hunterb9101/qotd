@@ -128,6 +128,37 @@ class ResponseWorkflowTests(unittest.TestCase):
             "2026-07-09:player@example.com",
         )
 
+    def test_score_responses_can_score_explicit_game_date(self) -> None:
+        store = InMemoryStateStore()
+        store.append_question_record(stored_question())
+
+        result = score_responses(
+            ScoreResponsesConfig(
+                scoring_date=None,
+                game_date=date(2026, 7, 9),
+                sender="***SECRET***",
+                organizer="***SECRET***",
+                gmail_user="***SECRET***",
+                oauth_client_id="client-id",
+                oauth_client_secret="client-secret",
+                oauth_refresh_token="refresh-token",
+                state_store=store,
+                dry_run=True,
+            ),
+            fetch_messages=lambda _query: [
+                gmail_message(
+                    message_id="reply-1",
+                    sender="player@example.com",
+                    body="B",
+                    sent_at=datetime.fromisoformat("2026-07-10T12:30:00+00:00"),
+                )
+            ],
+        )
+
+        self.assertEqual(result.question.game_date, "2026-07-09")
+        self.assertEqual(result.gmail_query, "subject:QOTD after:2026/07/09 before:2026/07/11")
+        self.assertEqual(result.organizer_message_id, "dry-run:2026-07-09")
+
 
 if __name__ == "__main__":
     unittest.main()

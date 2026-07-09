@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
-from qotd.dates import MOUNTAIN_TIME, answer_cutoff_at, previous_game_day
+from qotd.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
 from qotd.email_parsing import ReplyCandidate, build_reply_candidate, parse_gmail_message
 from qotd.emailing import build_organizer_email, send_gmail_message
 from qotd.gmail import search_messages
@@ -22,7 +22,7 @@ MessageFetcher = Callable[[str], list[dict[str, Any]]]
 class ScoreResponsesConfig:
     """Runtime config for the morning response scoring workflow."""
 
-    scoring_date: date
+    scoring_date: date | None
     sender: str
     organizer: str
     gmail_user: str
@@ -30,6 +30,7 @@ class ScoreResponsesConfig:
     oauth_client_secret: str
     oauth_refresh_token: str
     state_store: StateStore
+    game_date: date | None = None
     dry_run: bool = False
 
 
@@ -120,9 +121,15 @@ def score_responses(
 ) -> ScoreResponsesResult:
     """Collect, score, persist, and send the organizer scoring update."""
 
-    game_date = previous_game_day(config.scoring_date)
+    if config.game_date is None:
+        scoring_date = config.scoring_date or today_mountain()
+        game_date = previous_game_day(scoring_date)
+    else:
+        game_date = config.game_date
+        scoring_date = config.scoring_date or next_scoring_day(game_date)
+
     question = load_question_for_game_date(config.state_store, game_date)
-    query = gmail_reply_query(game_date=game_date, scoring_date=config.scoring_date)
+    query = gmail_reply_query(game_date=game_date, scoring_date=scoring_date)
     if fetch_messages is None:
         def fetch_messages(gmail_query: str) -> list[dict[str, Any]]:
             return search_messages(
@@ -137,7 +144,7 @@ def score_responses(
     scoring = score_replies(
         question=question,
         replies=replies,
-        cutoff_at=answer_cutoff_at(config.scoring_date),
+        cutoff_at=answer_cutoff_at(scoring_date),
         processed_at=datetime.now(UTC),
         state_store=config.state_store,
     )

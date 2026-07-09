@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 14 * * 1-5"
   workflow_dispatch:
+    inputs:
+      game_date:
+        description: "Question date to score, formatted YYYY-MM-DD. Leave blank to score the previous game day."
+        required: false
+        type: string
 
 jobs:
   score-responses:
@@ -29,4 +34,9 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Score responses
-        run: python -m qotd score-responses
+        run: |
+          if [ -n "${{ inputs.game_date }}" ]; then
+            python -m qotd score-responses --game-date "${{ inputs.game_date }}"
+          else
+            python -m qotd score-responses
+          fi

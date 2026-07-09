@@ -5,7 +5,7 @@ import unittest
 from datetime import date, datetime
 from email.message import EmailMessage
 
-from qotd.dates import answer_cutoff_at, monthly_series, previous_game_day
+from qotd.dates import answer_cutoff_at, monthly_series, next_scoring_day, previous_game_day
 from qotd.email_parsing import build_reply_candidate, parse_gmail_message, parse_rfc822_message
 from qotd.models import MonthlyScore, ReplyProcessingRecord
 from tests.support import InMemoryStateStore
@@ -22,6 +22,10 @@ class Phase2LocalDataTests(unittest.TestCase):
         self.assertEqual(previous_game_day(date(2026, 7, 7)), date(2026, 7, 6))
         self.assertEqual(previous_game_day(date(2026, 7, 6)), date(2026, 7, 3))
         self.assertEqual(previous_game_day(date(2026, 7, 5)), date(2026, 7, 3))
+
+    def test_next_scoring_day_skips_weekends(self) -> None:
+        self.assertEqual(next_scoring_day(date(2026, 7, 9)), date(2026, 7, 10))
+        self.assertEqual(next_scoring_day(date(2026, 7, 10)), date(2026, 7, 13))
 
     def test_answer_cutoff_is_mountain_time(self) -> None:
         cutoff = answer_cutoff_at(date(2026, 7, 9))

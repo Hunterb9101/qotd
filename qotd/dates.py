@@ -25,6 +25,15 @@ def previous_game_day(scoring_date: date) -> date:
     return candidate
 
 
+def next_scoring_day(game_date: date) -> date:
+    """Return the next weekday scoring date for a game date."""
+
+    candidate = game_date + timedelta(days=1)
+    while not is_weekday(candidate):
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def answer_cutoff_at(scoring_date: date) -> datetime:
     """Return the Mountain-time answer cutoff for a scoring date."""
 
