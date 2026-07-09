@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from pathlib import Path
 
 from qotd.contacts import fetch_contact_group_email_addresses, normalize_email_addresses
 from qotd.emailing import build_participant_email, send_gmail_message
 from qotd.generator import generate_placeholder_question
 from qotd.models import StoredQuestion
-from qotd.storage import append_question_record
+from qotd.storage import StateStore
 from qotd.validation import validate_question
 
 
@@ -21,11 +20,11 @@ class SendQuestionConfig:
     game_date: date
     sender: str
     contact_group_name: str
-    state_path: Path
     gmail_user: str
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
+    state_store: StateStore
     participant_emails: tuple[str, ...] = ()
     dry_run: bool = False
 
@@ -81,7 +80,7 @@ def send_question(config: SendQuestionConfig) -> SendQuestionResult:
         gmail_message_id=gmail_message_id,
         created_at=datetime.now(UTC),
     )
-    append_question_record(config.state_path, record)
+    config.state_store.append_question_record(record)
     return SendQuestionResult(
         record=record,
         email_body=email_message.get_content(),

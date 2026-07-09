@@ -1,30 +1,46 @@
-"""Persistent JSONL state for QOTD records."""
+"""Persistent state interfaces for QOTD records."""
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from qotd.models import StoredQuestion
+from qotd.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 
 
-def append_question_record(path: Path, record: StoredQuestion) -> None:
-    """Append one question record to a JSONL state file."""
+class StateStore(Protocol):
+    """Persistent state backend for QOTD workflows."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as state_file:
-        state_file.write(json.dumps(record.to_json_dict(), sort_keys=True) + "\n")
+    def append_question_record(self, record: StoredQuestion) -> None:
+        """Append one question record."""
 
+    def read_question_records(self) -> list[dict[str, Any]]:
+        """Read question records."""
 
-def read_question_records(path: Path) -> list[dict[str, Any]]:
-    """Read question records from JSONL state."""
+    def append_monthly_score(self, record: MonthlyScore) -> None:
+        """Append one monthly score record."""
 
-    if not path.exists():
-        return []
-    records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            records.append(json.loads(line))
-    return records
+    def read_monthly_scores(self, *, series: str | None = None) -> list[dict[str, Any]]:
+        """Read monthly score records."""
 
+    def append_reply_processing_record(
+        self,
+        record: ReplyProcessingRecord,
+        *,
+        interpreted_option: str | None = None,
+    ) -> None:
+        """Append one reply-processing record."""
+
+    def read_reply_processing_records(self, *, game_date: str | None = None) -> list[dict[str, Any]]:
+        """Read reply-processing records."""
+
+    def append_manual_adjustment(self, record: ManualAdjustment) -> None:
+        """Append one manual adjustment record."""
+
+    def read_manual_adjustments(self) -> list[dict[str, Any]]:
+        """Read manual adjustment records."""
+
+    def append_correct_answer_update(self, record: CorrectAnswerUpdate) -> None:
+        """Append one correct-answer update record."""
+
+    def read_correct_answer_updates(self, *, game_date: str | None = None) -> list[dict[str, Any]]:
+        """Read correct-answer update records."""

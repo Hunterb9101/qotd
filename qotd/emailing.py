@@ -37,6 +37,17 @@ def build_participant_email(question: Question, sender: str, recipients: Sequenc
     return message
 
 
+def build_organizer_email(*, sender: str, organizer: str, subject: str, body: str) -> EmailMessage:
+    """Build an organizer-only email."""
+
+    message = EmailMessage()
+    message["To"] = organizer
+    message["From"] = sender
+    message["Subject"] = subject
+    message.set_content(body)
+    return message
+
+
 def encode_gmail_message(message: EmailMessage) -> str:
     """Encode an email message for Gmail API transmission."""
 

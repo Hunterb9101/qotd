@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-import tempfile
 import unittest
 from datetime import date
-from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from qotd.auth import GOOGLE_TOKEN_URI, build_oauth_credentials
 from qotd.emailing import build_participant_email
 from qotd.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
 from qotd.generator import generate_placeholder_question
-from qotd.storage import read_question_records
 from qotd.validation import validate_question
 from qotd.workflow import SendQuestionConfig, send_question
+from tests.support import InMemoryStateStore
 
 
 class Phase1SendTests(unittest.TestCase):
@@ -78,11 +78,20 @@ class Phase1SendTests(unittest.TestCase):
         )
 
     def test_oauth_credentials_use_refresh_token_config(self) -> None:
-        credentials = build_oauth_credentials(
-            client_id="client-id",
-            client_secret="client-secret",
-            refresh_token="refresh-token",
-        )
+        class FakeCredentials:
+            def __init__(self, **kwargs: object) -> None:
+                self.client_id = kwargs["client_id"]
+                self.client_secret = kwargs["client_secret"]
+                self.refresh_token = kwargs["refresh_token"]
+                self.token_uri = kwargs["token_uri"]
+
+        fake_module = SimpleNamespace(Credentials=FakeCredentials)
+        with patch("qotd.auth.importlib.import_module", return_value=fake_module):
+            credentials = build_oauth_credentials(
+                client_id="client-id",
+                client_secret="client-secret",
+                refresh_token="refresh-token",
+            )
 
         self.assertEqual(credentials.client_id, "client-id")
         self.assertEqual(credentials.client_secret, "client-secret")
@@ -90,31 +99,30 @@ class Phase1SendTests(unittest.TestCase):
         self.assertEqual(credentials.token_uri, GOOGLE_TOKEN_URI)
 
     def test_dry_run_send_persists_question_record(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            state_path = Path(temp_dir) / "questions.jsonl"
+        store = InMemoryStateStore()
 
-            result = send_question(
-                SendQuestionConfig(
-                    game_date=date(2026, 7, 9),
-                    sender="***SECRET***",
-                    contact_group_name="QOTD Participants",
-                    state_path=state_path,
-                    gmail_user="***SECRET***",
-                    oauth_client_id="",
-                    oauth_client_secret="",
-                    oauth_refresh_token="",
-                    participant_emails=("Player@example.com", "player@example.com"),
-                    dry_run=True,
-                )
+        result = send_question(
+            SendQuestionConfig(
+                game_date=date(2026, 7, 9),
+                sender="***SECRET***",
+                contact_group_name="QOTD Participants",
+                state_store=store,
+                gmail_user="***SECRET***",
+                oauth_client_id="",
+                oauth_client_secret="",
+                oauth_refresh_token="",
+                participant_emails=("Player@example.com", "player@example.com"),
+                dry_run=True,
             )
+        )
 
-            records = read_question_records(state_path)
-            self.assertEqual(len(records), 1)
-            self.assertEqual(records[0]["game_date"], "2026-07-09")
-            self.assertEqual(records[0]["gmail_message_id"], "dry-run:2026-07-09")
-            self.assertEqual(records[0]["correct_option"], "B")
-            self.assertIn(result.record.prompt, result.email_body)
-            self.assertEqual(result.recipient_count, 1)
+        records = store.read_question_records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["game_date"], "2026-07-09")
+        self.assertEqual(records[0]["gmail_message_id"], "dry-run:2026-07-09")
+        self.assertEqual(records[0]["correct_option"], "B")
+        self.assertIn(result.record.prompt, result.email_body)
+        self.assertEqual(result.recipient_count, 1)
 
 
 if __name__ == "__main__":
