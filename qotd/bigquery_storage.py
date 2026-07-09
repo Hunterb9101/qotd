@@ -53,11 +53,17 @@ class BigQueryStateStore:
         return f"{self.project_id}.{self.dataset}.{name}"
 
     def insert_rows(self, table_name: str, rows: list[dict[str, Any]]) -> None:
-        """Insert rows and raise a useful error if BigQuery rejects them."""
+        """Append rows with a load job and raise if BigQuery rejects them."""
 
-        errors = self.client.insert_rows_json(self.table(table_name), rows)
-        if errors:
-            raise RuntimeError(f"BigQuery insert failed for {table_name}: {errors}")
+        bigquery = importlib.import_module("google.cloud.bigquery")
+        job = self.client.load_table_from_json(
+            rows,
+            self.table(table_name),
+            job_config=bigquery.LoadJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_APPEND),
+        )
+        job.result()
+        if job.errors:
+            raise RuntimeError(f"BigQuery load failed for {table_name}: {job.errors}")
 
     def query_rows(self, query: str, parameters: list[Any] | None = None) -> list[dict[str, Any]]:
         """Run a parameterized query and return dict rows."""
