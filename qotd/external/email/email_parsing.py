@@ -13,7 +13,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any
 
-from qotd.contacts import normalize_email_addresses
+from qotd.external.contacts.contacts import normalize_email_addresses
 
 
 ON_WROTE_RE = re.compile(r"^On .+ wrote:$")

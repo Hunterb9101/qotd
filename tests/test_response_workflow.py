@@ -5,7 +5,7 @@ import unittest
 from datetime import date, datetime
 
 from qotd.models import StoredQuestion
-from qotd.response_workflow import (
+from qotd.workflows.score import (
     ScoreResponsesConfig,
     collect_reply_candidates,
     gmail_reply_query,

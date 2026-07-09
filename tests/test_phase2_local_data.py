@@ -6,7 +6,7 @@ from datetime import date, datetime
 from email.message import EmailMessage
 
 from qotd.dates import answer_cutoff_at, monthly_series, next_scoring_day, previous_game_day
-from qotd.email_parsing import build_reply_candidate, parse_gmail_message, parse_rfc822_message
+from qotd.external.email.email_parsing import build_reply_candidate, parse_gmail_message, parse_rfc822_message
 from qotd.models import MonthlyScore, ReplyProcessingRecord
 from tests.support import InMemoryStateStore
 

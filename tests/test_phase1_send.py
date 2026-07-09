@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from qotd.auth import GOOGLE_TOKEN_URI, build_oauth_credentials
-from qotd.emailing import build_participant_email
-from qotd.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
+from qotd.external.email.emailing import build_participant_email
+from qotd.external.contacts.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
 from qotd.generator import generate_placeholder_question
 from qotd.validation import validate_question
-from qotd.workflow import SendQuestionConfig, send_question
+from qotd.workflows.question import SendQuestionConfig, send_question
 from tests.support import InMemoryStateStore
 
 

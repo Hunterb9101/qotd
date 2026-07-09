@@ -7,12 +7,12 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable
 
 from qotd.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
-from qotd.email_parsing import ReplyCandidate, build_reply_candidate, parse_gmail_message
-from qotd.emailing import build_organizer_email, send_gmail_message
-from qotd.gmail import search_messages
+from qotd.external.email.email_parsing import ReplyCandidate, build_reply_candidate, parse_gmail_message
+from qotd.external.email.emailing import build_organizer_email, send_gmail_message
+from qotd.external.email.gmail import search_messages
 from qotd.models import StoredQuestion
 from qotd.scoring import ScoringResult, build_organizer_update_body, parse_iso_datetime, score_replies
-from qotd.storage import StateStore
+from qotd.external.storage.storage import StateStore
 
 
 MessageFetcher = Callable[[str], list[dict[str, Any]]]

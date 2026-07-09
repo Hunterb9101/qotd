@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
-from qotd.bigquery_storage import BigQueryStateStore
+from qotd.external.storage.bigquery_storage import BigQueryStateStore
 from qotd.models import ReplyProcessingRecord, StoredQuestion
 
 

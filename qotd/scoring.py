@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 from typing import Any, Callable
 
 from qotd.dates import monthly_series
-from qotd.email_parsing import ReplyCandidate
+from qotd.external.email.email_parsing import ReplyCandidate
 from qotd.models import MonthlyScore, ReplyProcessingRecord, StoredQuestion
-from qotd.storage import StateStore
+from qotd.external.storage.storage import StateStore
 
 
 ANSWER_RE = re.compile(r"^[A-D]$", re.IGNORECASE)

@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
-from qotd.contacts import fetch_contact_group_email_addresses, normalize_email_addresses
-from qotd.emailing import build_participant_email, send_gmail_message
+from qotd.external.contacts.contacts import fetch_contact_group_email_addresses, normalize_email_addresses
+from qotd.external.email.emailing import build_participant_email, send_gmail_message
 from qotd.generator import generate_placeholder_question
 from qotd.models import StoredQuestion
-from qotd.storage import StateStore
+from qotd.external.storage.storage import StateStore
 from qotd.validation import validate_question
 
 

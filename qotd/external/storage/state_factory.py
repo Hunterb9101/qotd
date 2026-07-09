@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from qotd.bigquery_storage import BigQueryStateStore
+from qotd.external.storage.bigquery_storage import BigQueryStateStore
 
 
 def build_bigquery_state_store(

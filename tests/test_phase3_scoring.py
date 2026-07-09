@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 
-from qotd.email_parsing import ReplyCandidate
+from qotd.external.email.email_parsing import ReplyCandidate
 from qotd.models import MonthlyScore, StoredQuestion
 from qotd.scoring import (
     AnswerInterpretation,
@@ -12,7 +12,7 @@ from qotd.scoring import (
     score_replies,
     select_latest_eligible_replies,
 )
-from qotd.emailing import build_organizer_email
+from qotd.external.email.emailing import build_organizer_email
 from tests.support import InMemoryStateStore
 
 
