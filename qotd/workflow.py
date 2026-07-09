@@ -22,8 +22,10 @@ class SendQuestionConfig:
     sender: str
     contact_group_name: str
     state_path: Path
-    delegated_user: str
-    service_account_file: str
+    gmail_user: str
+    oauth_client_id: str
+    oauth_client_secret: str
+    oauth_refresh_token: str
     participant_emails: tuple[str, ...] = ()
     dry_run: bool = False
 
@@ -44,8 +46,9 @@ def resolve_participant_emails(config: SendQuestionConfig) -> list[str]:
         email_addresses = normalize_email_addresses(config.participant_emails)
     else:
         email_addresses = fetch_contact_group_email_addresses(
-            delegated_user=config.delegated_user,
-            service_account_file=config.service_account_file,
+            oauth_client_id=config.oauth_client_id,
+            oauth_client_secret=config.oauth_client_secret,
+            oauth_refresh_token=config.oauth_refresh_token,
             group_name=config.contact_group_name,
         )
 
@@ -67,8 +70,10 @@ def send_question(config: SendQuestionConfig) -> SendQuestionResult:
     else:
         gmail_message_id = send_gmail_message(
             email_message,
-            delegated_user=config.delegated_user,
-            service_account_file=config.service_account_file,
+            user_id=config.gmail_user,
+            oauth_client_id=config.oauth_client_id,
+            oauth_client_secret=config.oauth_client_secret,
+            oauth_refresh_token=config.oauth_refresh_token,
         )
 
     record = StoredQuestion.from_question(

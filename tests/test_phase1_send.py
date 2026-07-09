@@ -5,6 +5,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from qotd.auth import GOOGLE_TOKEN_URI, build_oauth_credentials
 from qotd.emailing import build_participant_email
 from qotd.contacts import extract_email_addresses, find_contact_group, normalize_email_addresses
 from qotd.generator import generate_placeholder_question
@@ -76,6 +77,18 @@ class Phase1SendTests(unittest.TestCase):
             ["person@example.com"],
         )
 
+    def test_oauth_credentials_use_refresh_token_config(self) -> None:
+        credentials = build_oauth_credentials(
+            client_id="client-id",
+            client_secret="client-secret",
+            refresh_token="refresh-token",
+        )
+
+        self.assertEqual(credentials.client_id, "client-id")
+        self.assertEqual(credentials.client_secret, "client-secret")
+        self.assertEqual(credentials.refresh_token, "refresh-token")
+        self.assertEqual(credentials.token_uri, GOOGLE_TOKEN_URI)
+
     def test_dry_run_send_persists_question_record(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "questions.jsonl"
@@ -86,8 +99,10 @@ class Phase1SendTests(unittest.TestCase):
                     sender="***SECRET***",
                     contact_group_name="QOTD Participants",
                     state_path=state_path,
-                    delegated_user="***SECRET***",
-                    service_account_file="",
+                    gmail_user="***SECRET***",
+                    oauth_client_id="",
+                    oauth_client_secret="",
+                    oauth_refresh_token="",
                     participant_emails=("Player@example.com", "player@example.com"),
                     dry_run=True,
                 )

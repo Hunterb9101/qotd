@@ -6,6 +6,8 @@ import importlib
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from qotd.auth import build_oauth_credentials
+
 
 CONTACTS_READONLY_SCOPE = "https://www.googleapis.com/auth/contacts.readonly"
 MAX_BATCH_GET_PEOPLE = 200
@@ -53,16 +55,21 @@ def chunked(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
         yield values[index : index + size]
 
 
-def build_people_service(*, delegated_user: str, service_account_file: str) -> Any:
-    """Build a delegated Google People API service."""
+def build_people_service(
+    *,
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_refresh_token: str,
+) -> Any:
+    """Build a Google People API service."""
 
-    service_account = importlib.import_module("google.oauth2.service_account")
     discovery = importlib.import_module("googleapiclient.discovery")
-
-    credentials = service_account.Credentials.from_service_account_file(
-        service_account_file,
+    credentials = build_oauth_credentials(
+        client_id=oauth_client_id,
+        client_secret=oauth_client_secret,
+        refresh_token=oauth_refresh_token,
         scopes=[CONTACTS_READONLY_SCOPE],
-    ).with_subject(delegated_user)
+    )
     return discovery.build("people", "v1", credentials=credentials, cache_discovery=False)
 
 
@@ -100,15 +107,17 @@ def fetch_people_email_addresses(service: Any, resource_names: Sequence[str]) ->
 
 def fetch_contact_group_email_addresses(
     *,
-    delegated_user: str,
-    service_account_file: str,
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_refresh_token: str,
     group_name: str,
 ) -> list[str]:
-    """Fetch participant email addresses from a delegated user's contact group."""
+    """Fetch participant email addresses from the authorized user's contact group."""
 
     service = build_people_service(
-        delegated_user=delegated_user,
-        service_account_file=service_account_file,
+        oauth_client_id=oauth_client_id,
+        oauth_client_secret=oauth_client_secret,
+        oauth_refresh_token=oauth_refresh_token,
     )
     groups_response = (
         service.contactGroups()
@@ -132,4 +141,3 @@ def fetch_contact_group_email_addresses(
     if not email_addresses:
         raise RuntimeError(f"Contact group has no member email addresses: {group_name}")
     return email_addresses
-

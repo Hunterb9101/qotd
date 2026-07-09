@@ -40,8 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
     send_parser.add_argument("--dry-run-recipient", action="append", default=[])
     send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
-    send_parser.add_argument("--delegated-user", default=os.environ.get("QOTD_DELEGATED_USER", "***SECRET***"))
-    send_parser.add_argument("--service-account-file", default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"))
+    send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    send_parser.add_argument("--oauth-client-id", default=os.environ.get("GOOGLE_OAUTH_CLIENT_ID", ""))
+    send_parser.add_argument("--oauth-client-secret", default=os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", ""))
+    send_parser.add_argument("--oauth-refresh-token", default=os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN", ""))
     send_parser.add_argument("--state-path", type=Path, default=Path(os.environ.get("QOTD_STATE_PATH", DEFAULT_STATE_PATH)))
     send_parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -54,9 +56,13 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "send-question":
-        service_account_file = args.service_account_file or ""
-        if not service_account_file and not args.dry_run_recipient:
-            service_account_file = env_value("GOOGLE_APPLICATION_CREDENTIALS")
+        if not args.dry_run_recipient:
+            if not args.oauth_client_id:
+                args.oauth_client_id = env_value("GOOGLE_OAUTH_CLIENT_ID")
+            if not args.oauth_client_secret:
+                args.oauth_client_secret = env_value("GOOGLE_OAUTH_CLIENT_SECRET")
+            if not args.oauth_refresh_token:
+                args.oauth_refresh_token = env_value("GOOGLE_OAUTH_REFRESH_TOKEN")
 
         result = send_question(
             SendQuestionConfig(
@@ -64,8 +70,10 @@ def main() -> None:
                 sender=args.sender,
                 contact_group_name=args.contact_group_name,
                 state_path=args.state_path,
-                delegated_user=args.delegated_user,
-                service_account_file=service_account_file,
+                gmail_user=args.gmail_user,
+                oauth_client_id=args.oauth_client_id,
+                oauth_client_secret=args.oauth_client_secret,
+                oauth_refresh_token=args.oauth_refresh_token,
                 participant_emails=tuple(args.dry_run_recipient),
                 dry_run=args.dry_run,
             )

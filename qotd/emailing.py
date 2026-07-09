@@ -7,6 +7,7 @@ import importlib
 from collections.abc import Sequence
 from email.message import EmailMessage
 
+from qotd.auth import build_oauth_credentials
 from qotd.models import OPTION_LABELS, Question
 
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
@@ -45,23 +46,25 @@ def encode_gmail_message(message: EmailMessage) -> str:
 def send_gmail_message(
     message: EmailMessage,
     *,
-    delegated_user: str,
-    service_account_file: str,
+    user_id: str,
+    oauth_client_id: str,
+    oauth_client_secret: str,
+    oauth_refresh_token: str,
 ) -> str:
-    """Send a message through Gmail API using delegated service-account auth."""
+    """Send a message through Gmail API using OAuth user auth."""
 
-    service_account = importlib.import_module("google.oauth2.service_account")
     discovery = importlib.import_module("googleapiclient.discovery")
-
-    credentials = service_account.Credentials.from_service_account_file(
-        service_account_file,
+    credentials = build_oauth_credentials(
+        client_id=oauth_client_id,
+        client_secret=oauth_client_secret,
+        refresh_token=oauth_refresh_token,
         scopes=[GMAIL_SEND_SCOPE],
-    ).with_subject(delegated_user)
+    )
     service = discovery.build("gmail", "v1", credentials=credentials, cache_discovery=False)
     response = (
         service.users()
         .messages()
-        .send(userId=delegated_user, body={"raw": encode_gmail_message(message)})
+        .send(userId=user_id, body={"raw": encode_gmail_message(message)})
         .execute()
     )
     message_id = response.get("id")
