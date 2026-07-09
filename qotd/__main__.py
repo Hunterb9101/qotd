@@ -1,0 +1,10 @@
+"""Command-line entry point for QOTD automation."""
+
+from __future__ import annotations
+
+from qotd.cli import main
+
+
+if __name__ == "__main__":
+    main()
+

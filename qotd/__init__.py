@@ -1,0 +1,2 @@
+"""QOTD automation package."""
+

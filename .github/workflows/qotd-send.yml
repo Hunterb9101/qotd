@@ -1,0 +1,32 @@
+name: Send QOTD
+
+on:
+  schedule:
+    - cron: "0 18 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  send-question:
+    runs-on: ubuntu-latest
+    env:
+      QOTD_MAILING_LIST: ${{ secrets.QOTD_MAILING_LIST }}
+      QOTD_SENDER: ***SECRET***
+      QOTD_DELEGATED_USER: ***SECRET***
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/qotd-service-account.json
+      QOTD_STATE_PATH: state/questions.jsonl
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Write Google service account
+        run: printf '%s' '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
+
+      - name: Send generated QOTD
+        run: python -m qotd send-question
+
