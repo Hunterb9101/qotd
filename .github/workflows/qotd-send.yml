@@ -8,6 +8,7 @@ on:
 jobs:
   send-question:
     runs-on: ubuntu-latest
+    environment: production
     env:
       QOTD_SENDER: ***SECRET***
       QOTD_DELEGATED_USER: ***SECRET***
