@@ -45,6 +45,7 @@ class ScoreResponsesResult:
     organizer_update_body: str
     organizer_message_id: str
     gmail_query: str
+    skipped_reason: str | None = None
 
 
 def today_mountain() -> date:
@@ -80,7 +81,22 @@ def load_question_for_game_date(state_store: StorageClient, game_date: date) -> 
     ]
     if not matches:
         raise RuntimeError(f"No stored QOTD question found for {game_date_text}")
-    return matches[-1]
+    question = matches[-1]
+    updates = state_store.read_correct_answer_updates(game_date=game_date_text)
+    if updates:
+        latest = updates[-1]
+        return StoredQuestion(
+            game_date=question.game_date,
+            prompt=question.prompt,
+            options=question.options,
+            correct_option=str(latest["correct_option"]),
+            source_note=question.source_note,
+            source_url=str(latest["source_url"]),
+            source=question.source,
+            gmail_message_id=question.gmail_message_id,
+            created_at=question.created_at,
+        )
+    return question
 
 
 def gmail_reply_query(*, game_date: date, scoring_date: date) -> str:
@@ -130,6 +146,49 @@ def score_responses(
 
     question = load_question_for_game_date(config.state_store, game_date)
     query = gmail_reply_query(game_date=game_date, scoring_date=scoring_date)
+    if not question.correct_option:
+        body = (
+            f"QOTD scoring skipped for {question.game_date}.\n\n"
+            "The stored question does not have a correct answer yet. "
+            "Send a correct-answer email before rerunning scoring.\n\n"
+            "Expected template:\n"
+            "Action: set-correct-answer\n"
+            f"Game date: {question.game_date}\n"
+            "Correct option: C\n"
+            "Source URL: https://example.com/source-for-answer\n"
+        )
+        if config.dry_run:
+            organizer_message_id = f"dry-run:{game_date.isoformat()}"
+        else:
+            organizer_message = build_organizer_email(
+                sender=config.sender,
+                organizer=config.organizer,
+                subject=f"QOTD scoring skipped - {game_date.isoformat()}",
+                body=body,
+            )
+            organizer_message_id = send_gmail_message(
+                organizer_message,
+                user_id=config.gmail_user,
+                oauth_client_id=config.oauth_client_id,
+                oauth_client_secret=config.oauth_client_secret,
+                oauth_refresh_token=config.oauth_refresh_token,
+            )
+        return ScoreResponsesResult(
+            question=question,
+            scoring=ScoringResult(
+                game_date=question.game_date,
+                correct=(),
+                incorrect=(),
+                needs_review=(),
+                skipped_processing_keys=(),
+                standings=(),
+            ),
+            reply_count=0,
+            organizer_update_body=body,
+            organizer_message_id=organizer_message_id,
+            gmail_query=query,
+            skipped_reason="missing_correct_answer",
+        )
     if fetch_messages is None:
         def fetch_messages(gmail_query: str) -> list[ParsedEmailMessage]:
             return search_messages(

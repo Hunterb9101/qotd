@@ -10,6 +10,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: qotd-morning-state
+  cancel-in-progress: false
+
 jobs:
   score-responses:
     runs-on: ubuntu-latest

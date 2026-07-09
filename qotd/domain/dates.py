@@ -44,3 +44,14 @@ def monthly_series(game_date: date) -> str:
     """Return the MMYY score series for a game date."""
 
     return game_date.strftime("%m%y")
+
+
+def is_final_weekday_of_month(value: date) -> bool:
+    """Return whether a date is the final weekday in its month."""
+
+    candidate = value + timedelta(days=1)
+    while candidate.month == value.month:
+        if is_weekday(candidate):
+            return False
+        candidate += timedelta(days=1)
+    return is_weekday(value)

@@ -23,6 +23,13 @@ Incorrect replies:
 Needs review:
 {% for reply in result.needs_review -%}
 - {{ reply.email }}: {{ reply.interpreted_option }}
+  Adjustment template:
+  Action: adjust-score
+  Participant: {{ reply.email }}
+  Game date: {{ question.game_date }}
+  Points: 1
+  Reason: unclear_answer_accepted
+  Gmail message ID: {{ reply.gmail_message_id }}
 {% else -%}
 - None
 {% endfor %}
@@ -33,6 +40,17 @@ Current standings:
 {% else -%}
 - None
 {% endfor %}
+{% if is_final_weekday %}
+
+Monthly winner announcement:
+{% for winner in winners -%}
+- {{ winner.email }} with {{ winner.points }} points
+{% else -%}
+- No scored participants this month
+{% endfor %}
+
+Next scoring day starts a new monthly score bucket automatically.
+{% endif %}
 {% if result.skipped_processing_keys %}
 
 Skipped already-processed replies:
