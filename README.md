@@ -20,9 +20,12 @@ export GOOGLE_OAUTH_CLIENT_SECRET="..."
 export GOOGLE_OAUTH_REFRESH_TOKEN="..."
 export GOOGLE_CLOUD_PROJECT="..."
 export BIGQUERY_DATASET="qotd"
+export OPENAI_API_KEY="..."
 ```
 
 The OAuth refresh token must include Gmail read, send, and modify access so the adjustment job can find requests, reply to them, and remove the unread label after handling.
+
+Scoring uses OpenAI to interpret freeform replies that are not a plain `A`, `B`, `C`, or `D`. Use `OPENAI_INTERPRETER_MODEL` to override the default interpreter model. For local deterministic-only scoring, pass `--disable-ai-answer-interpreter`.
 
 ## Email Management Jobs
 

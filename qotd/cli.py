@@ -6,6 +6,7 @@ import argparse
 import os
 from datetime import date
 
+from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.usecases.correct_answer import ProcessCorrectAnswerEmailsConfig, process_correct_answer_emails
 from qotd.usecases.adjust_score import (
@@ -14,12 +15,13 @@ from qotd.usecases.adjust_score import (
     apply_score_adjustment,
     process_score_adjustment_emails,
 )
-from qotd.usecases.score_responses import ScoreResponsesConfig, score_responses
+from qotd.usecases.score_responses import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 
 
 DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"
 DEFAULT_BIGQUERY_DATASET = "qotd"
+DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-4.1-mini"
 
 
 def parse_date(value: str) -> date:
@@ -83,6 +85,12 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
     score_parser.add_argument("--organizer", default=os.environ.get("QOTD_ORGANIZER", os.environ.get("QOTD_SENDER", "***SECRET***")))
     score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    score_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
+    score_parser.add_argument(
+        "--openai-interpreter-model",
+        default=os.environ.get("OPENAI_INTERPRETER_MODEL", DEFAULT_OPENAI_INTERPRETER_MODEL),
+    )
+    score_parser.add_argument("--disable-ai-answer-interpreter", action="store_true")
     add_google_options(score_parser)
     score_parser.add_argument("--dry-run", action="store_true")
 
@@ -183,6 +191,15 @@ def main() -> None:
                 oauth_client_secret=args.oauth_client_secret,
                 oauth_refresh_token=args.oauth_refresh_token,
                 state_store=state_store,
+                answer_interpreter_factory=None
+                if args.disable_ai_answer_interpreter
+                else lambda question: LLMAnswerInterpreter(
+                    llm_client=build_openai_llm_client(
+                        api_key=args.openai_api_key,
+                        model=args.openai_interpreter_model,
+                    ),
+                    question=question,
+                ),
                 dry_run=args.dry_run,
             )
         )

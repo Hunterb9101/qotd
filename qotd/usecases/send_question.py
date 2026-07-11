@@ -8,7 +8,7 @@ from typing import Callable
 
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.generator import generate_placeholder_question
-from qotd.domain.models import StoredQuestion
+from qotd.domain.models import Question, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.contacts.google import fetch_contact_group_email_addresses
 from qotd.external.email.core import ParsedEmailMessage
@@ -18,6 +18,7 @@ from qotd.presentation.emails import build_participant_email
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
+QuestionGeneratorForDate = Callable[[date, StorageClient], Question]
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class SendQuestionConfig:
     oauth_refresh_token: str
     state_store: StorageClient
     participant_emails: tuple[str, ...] = ()
+    question_generator: QuestionGeneratorForDate | None = None
     dry_run: bool = False
 
 
@@ -135,7 +137,10 @@ def send_question(
                 skipped_generated_send=True,
             )
 
-    question = generate_placeholder_question(config.game_date.isoformat())
+    if config.question_generator is None:
+        question = generate_placeholder_question(config.game_date.isoformat())
+    else:
+        question = config.question_generator(config.game_date, config.state_store)
     validate_question(question)
     participant_emails = resolve_participant_emails(config)
     email_message = build_participant_email(question, config.sender, participant_emails)

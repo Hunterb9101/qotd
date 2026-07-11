@@ -5,6 +5,7 @@ import unittest
 from datetime import date, datetime
 
 from qotd.domain.models import StoredQuestion
+from qotd.domain.scoring import AnswerInterpretation
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import GmailAdapter
 from qotd.usecases.score_responses import (
@@ -179,6 +180,52 @@ class ResponseWorkflowTests(unittest.TestCase):
         self.assertEqual(result.question.game_date, "2026-07-09")
         self.assertEqual(result.gmail_query, "subject:QOTD after:2026/07/09 before:2026/07/11")
         self.assertEqual(result.organizer_message_id, "dry-run:2026-07-09")
+
+    def test_score_responses_uses_ai_interpreter_for_freeform_replies_only(self) -> None:
+        store = InMemoryStateStore()
+        store.append_question_record(stored_question())
+        interpreted_texts: list[str] = []
+
+        def build_interpreter(question: StoredQuestion):
+            self.assertEqual(question.correct_option, "B")
+
+            def interpret(body_text: str) -> AnswerInterpretation:
+                interpreted_texts.append(body_text)
+                return AnswerInterpretation(option="B", needs_review=False)
+
+            return interpret
+
+        result = score_responses(
+            ScoreResponsesConfig(
+                scoring_date=date(2026, 7, 10),
+                sender="***SECRET***",
+                organizer="***SECRET***",
+                gmail_user="***SECRET***",
+                oauth_client_id="client-id",
+                oauth_client_secret="client-secret",
+                oauth_refresh_token="refresh-token",
+                state_store=store,
+                answer_interpreter_factory=build_interpreter,
+                dry_run=True,
+            ),
+            fetch_messages=lambda _query: [
+                parsed_gmail_message(
+                    message_id="reply-1",
+                    sender="exact@example.com",
+                    body="B",
+                    sent_at=datetime.fromisoformat("2026-07-10T12:30:00+00:00"),
+                ),
+                parsed_gmail_message(
+                    message_id="reply-2",
+                    sender="freeform@example.com",
+                    body="Probably Jupiter",
+                    sent_at=datetime.fromisoformat("2026-07-10T12:31:00+00:00"),
+                ),
+            ],
+        )
+
+        self.assertEqual(interpreted_texts, ["Probably Jupiter"])
+        self.assertEqual([reply.email for reply in result.scoring.correct], ["exact@example.com", "freeform@example.com"])
 
 
 if __name__ == "__main__":

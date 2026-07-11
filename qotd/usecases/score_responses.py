@@ -4,19 +4,70 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Literal
+
+from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
-from qotd.domain.models import ReplyCandidate, StoredQuestion
-from qotd.domain.scoring import ScoringResult, parse_iso_datetime, score_replies
+from qotd.domain.models import OPTION_LABELS, ReplyCandidate, StoredQuestion
+from qotd.domain.scoring import (
+    AnswerInterpretation,
+    ScoringResult,
+    parse_deterministic_answer,
+    parse_iso_datetime,
+    score_replies,
+)
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import GmailAdapter, search_messages, send_gmail_message
+from qotd.external.llm.core import LLMClient
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_organizer_email
 from qotd.presentation.organizer_updates import build_organizer_update_body
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
+AnswerInterpreterFactory = Callable[[StoredQuestion], Callable[[str], AnswerInterpretation]]
+DEFAULT_INTERPRET_ANSWER_PROMPT_PATH = Path(__file__).resolve().parents[2] / "docs" / "prompts" / "interpret_answer.md"
+
+
+class AnswerInterpretationOutput(BaseModel):
+    """Structured answer interpretation returned by an LLM."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    option: Literal["A", "B", "C", "D", "UNKNOWN"]
+    needs_review: bool
+
+
+@dataclass(frozen=True)
+class LLMAnswerInterpreter:
+    """Interpret freeform QOTD replies using a provider-neutral LLM client."""
+
+    llm_client: LLMClient
+    question: StoredQuestion
+    prompt_path: Path = DEFAULT_INTERPRET_ANSWER_PROMPT_PATH
+    max_output_tokens: int = 200
+
+    def __call__(self, body_text: str) -> AnswerInterpretation:
+        """Interpret one participant reply as A/B/C/D/UNKNOWN."""
+
+        payload = {
+            "question": {
+                "prompt": self.question.prompt,
+                "options": {label: self.question.options[label] for label in OPTION_LABELS},
+            },
+            "reply_text": body_text,
+        }
+        data = self.llm_client.create_structured_response(
+            prompt_path=self.prompt_path,
+            payload=payload,
+            response_model=AnswerInterpretationOutput,
+            schema_name="qotd_answer_interpretation",
+            max_output_tokens=self.max_output_tokens,
+        )
+        needs_review = data.needs_review or data.option == "UNKNOWN"
+        return AnswerInterpretation(option=data.option, needs_review=needs_review)
 
 
 @dataclass(frozen=True)
@@ -32,6 +83,7 @@ class ScoreResponsesConfig:
     oauth_refresh_token: str
     state_store: StorageClient
     game_date: date | None = None
+    answer_interpreter_factory: AnswerInterpreterFactory | None = None
     dry_run: bool = False
 
 
@@ -200,6 +252,17 @@ def score_responses(
             )
 
     replies = collect_reply_candidates(fetch_messages(query), question=question, sender=config.sender)
+    interpret_answer = None
+    if config.answer_interpreter_factory is not None:
+        ai_interpret_answer = config.answer_interpreter_factory(question)
+
+        def interpret_answer(body_text: str) -> AnswerInterpretation:
+            deterministic = parse_deterministic_answer(body_text)
+            if not deterministic.needs_review:
+                return deterministic
+            return ai_interpret_answer(body_text)
+
+    scoring_interpreter = parse_deterministic_answer if interpret_answer is None else interpret_answer
     scoring = score_replies(
         question=question,
         replies=replies,
@@ -207,6 +270,7 @@ def score_responses(
         processed_at=datetime.now(UTC),
         existing_reply_processing_records=config.state_store.read_reply_processing_records(game_date=question.game_date),
         existing_monthly_score_records=config.state_store.read_monthly_scores(),
+        interpret_answer=scoring_interpreter,
     )
     for score_record in scoring.monthly_score_updates:
         config.state_store.append_monthly_score(score_record)
