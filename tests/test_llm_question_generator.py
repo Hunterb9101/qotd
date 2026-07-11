@@ -6,7 +6,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
-from qotd.usecases.generate_question_for_topic import LLMQuestionGenerator, QuestionTopic
+from qotd.external.llm.openai import render_prompt
+from qotd.external.web_search.core import WebSearchResult
+from qotd.usecases.generate_question_for_topic import DEFAULT_PROMPT_PATH, LLMQuestionGenerator, QuestionTopic
 
 
 class FakeLLMClient:
@@ -36,6 +38,46 @@ class FakeLLMClient:
 
 
 class LLMQuestionGeneratorTests(unittest.TestCase):
+    def test_default_prompt_is_packaged_and_contains_generation_guidance(self) -> None:
+        prompt = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("exactly four distinct options labeled A, B, C, and D", prompt)
+        self.assertIn("exactly one option is correct", prompt)
+        self.assertIn("supplied source evidence supports that answer", prompt)
+        self.assertIn("informal, conversational, and human", prompt)
+        self.assertIn("accessible-to-moderate difficulty", prompt)
+        self.assertIn("single light aside", prompt)
+        self.assertIn("grim, partisan, medical, legal, or highly volatile", prompt)
+        self.assertIn("Do not reveal or strongly hint", prompt)
+        self.assertNotIn("Cody", prompt)
+        self.assertNotIn("docs/prompts", str(DEFAULT_PROMPT_PATH))
+
+    def test_default_prompt_renders_topic_category_and_evidence(self) -> None:
+        rendered = render_prompt(
+            DEFAULT_PROMPT_PATH,
+            {
+                "category": "Food & Drink",
+                "topic": {
+                    "title": "National Cheddar Day",
+                    "summary": "A food holiday.",
+                },
+                "evidence": [
+                    {
+                        "title": "USDA cheese data",
+                        "url": "https://example.com/cheese-production",
+                        "snippet": "Wisconsin produces the most cheese.",
+                    }
+                ],
+                "prior_rejection_reasons": ["The first answer was ambiguous."],
+            },
+        )
+
+        self.assertIn("Category: Food & Drink", rendered)
+        self.assertIn("Topic title: National Cheddar Day", rendered)
+        self.assertIn("USDA cheese data", rendered)
+        self.assertIn("Wisconsin produces the most cheese.", rendered)
+        self.assertIn("The first answer was ambiguous.", rendered)
+
     def test_llm_generator_maps_structured_response_to_candidate(self) -> None:
         output: dict[str, Any] = {
             "prompt": "Which state produces the most cheese?",
@@ -47,10 +89,8 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
             },
             "correct_option": "C",
             "source_note": "USDA data identifies Wisconsin as the top cheese-producing state.",
-            "source_url": "https://example.com/cheese-production",
-            "subcategory": "Cheese",
+            "source_urls": ["https://example.com/cheese-production"],
             "topic": "U.S. cheese production",
-            "entities": ["Wisconsin", "USDA"],
         }
         client = FakeLLMClient(output)
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -67,22 +107,43 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                 source_url="https://example.com/cheddar-day",
             )
 
-            candidate = generator(topic, "Food & Drink", date(2026, 7, 10), ("previous failure",))
+            search_results = (
+                WebSearchResult(
+                    title="Cheese data",
+                    url="https://example.com/cheese-production",
+                    snippet="Wisconsin produces the most cheese.",
+                ),
+            )
+            candidate = generator(
+                topic,
+                "Food & Drink",
+                date(2026, 7, 10),
+                search_results,
+                ("previous failure",),
+            )
 
         self.assertEqual(candidate.question.prompt, "Which state produces the most cheese?")
         self.assertEqual(candidate.question.options["C"], "Wisconsin")
         self.assertEqual(candidate.question.correct_option, "C")
         self.assertEqual(candidate.topic_source, topic)
         self.assertEqual(candidate.category, "Food & Drink")
-        self.assertEqual(candidate.subcategory, "Cheese")
-        self.assertEqual(candidate.entities, ("Wisconsin", "USDA"))
+        self.assertEqual(candidate.source_urls, ("https://example.com/cheese-production",))
+        self.assertEqual(candidate.source_evidence, ("Wisconsin produces the most cheese.",))
 
         call = client.calls[0]
         self.assertEqual(call["prompt_path"], prompt_path)
         self.assertEqual(call["schema_name"], "qotd_generated_question")
         request_payload = cast(dict[str, Any], call["payload"])
+        self.assertEqual(
+            set(request_payload),
+            {"category", "topic", "evidence", "prior_rejection_reasons"},
+        )
         self.assertEqual(request_payload["category"], "Food & Drink")
-        self.assertEqual(request_payload["topic"]["title"], "National Cheddar Day")
+        self.assertEqual(
+            request_payload["topic"],
+            {"title": "National Cheddar Day", "summary": "A food holiday."},
+        )
+        self.assertEqual(request_payload["evidence"][0]["title"], "Cheese data")
         self.assertEqual(request_payload["prior_rejection_reasons"], ["previous failure"])
 
 

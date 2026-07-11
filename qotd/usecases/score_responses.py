@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
 from qotd.domain.models import OPTION_LABELS, ReplyCandidate, StoredQuestion
 from qotd.domain.scoring import (
@@ -20,6 +21,7 @@ from qotd.domain.scoring import (
 )
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import GmailAdapter, search_messages, send_gmail_message
+from qotd.external.contacts.google import fetch_contact_group_email_addresses
 from qotd.external.llm.core import LLMClient
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_organizer_email
@@ -28,7 +30,7 @@ from qotd.presentation.organizer_updates import build_organizer_update_body
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
 AnswerInterpreterFactory = Callable[[StoredQuestion], Callable[[str], AnswerInterpretation]]
-DEFAULT_INTERPRET_ANSWER_PROMPT_PATH = Path(__file__).resolve().parents[2] / "docs" / "prompts" / "interpret_answer.md"
+DEFAULT_INTERPRET_ANSWER_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "interpret_answer.md"
 
 
 class AnswerInterpretationOutput(BaseModel):
@@ -82,9 +84,30 @@ class ScoreResponsesConfig:
     oauth_client_secret: str
     oauth_refresh_token: str
     state_store: StorageClient
+    contact_group_name: str = ""
+    participant_emails: tuple[str, ...] = ()
     game_date: date | None = None
     answer_interpreter_factory: AnswerInterpreterFactory | None = None
     dry_run: bool = False
+
+
+def resolve_eligible_participants(config: ScoreResponsesConfig) -> list[str]:
+    """Resolve the canonical participant list from an override or Google Contacts."""
+
+    if config.participant_emails:
+        participants = normalize_email_addresses(config.participant_emails)
+    elif config.contact_group_name:
+        participants = fetch_contact_group_email_addresses(
+            oauth_client_id=config.oauth_client_id,
+            oauth_client_secret=config.oauth_client_secret,
+            oauth_refresh_token=config.oauth_refresh_token,
+            group_name=config.contact_group_name,
+        )
+    else:
+        raise RuntimeError("A Google Contacts group is required for scoring")
+    if not participants:
+        raise RuntimeError("No eligible QOTD participants found")
+    return participants
 
 
 @dataclass(frozen=True)
@@ -251,6 +274,7 @@ def score_responses(
                 query=gmail_query,
             )
 
+    participants = resolve_eligible_participants(config)
     replies = collect_reply_candidates(fetch_messages(query), question=question, sender=config.sender)
     interpret_answer = None
     if config.answer_interpreter_factory is not None:
@@ -271,6 +295,7 @@ def score_responses(
         existing_reply_processing_records=config.state_store.read_reply_processing_records(game_date=question.game_date),
         existing_monthly_score_records=config.state_store.read_monthly_scores(),
         interpret_answer=scoring_interpreter,
+        eligible_emails=participants,
     )
     for score_record in scoring.monthly_score_updates:
         config.state_store.append_monthly_score(score_record)

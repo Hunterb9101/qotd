@@ -60,7 +60,7 @@ class Phase4CompletionTests(unittest.TestCase):
                     message_id="manual-1",
                     thread_id="thread-1",
                     sender_email="***SECRET***",
-                    subject="QOTD",
+                    subject="QOTD - 2026-07-09",
                     sent_at=datetime(2026, 7, 9, 18, 0, tzinfo=UTC),
                     body_text="Manual question body",
                 )

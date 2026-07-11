@@ -1,26 +1,31 @@
-"""Generate and verify a QOTD question for one topic."""
+"""Research, generate, and verify one QOTD question."""
 
 from __future__ import annotations
 
+import random
+import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Callable, Literal, Protocol
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
-from qotd.external.llm.core import LLMClient
+from qotd.domain.categories import QUESTION_CATEGORIES
 from qotd.domain.models import Question
 from qotd.domain.validation import validate_question
-from qotd.external.storage.core import StorageClient
+from qotd.external.llm.core import LLMClient
+from qotd.external.web_search.core import WebSearchClient, WebSearchResult
 
 
-DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[2] / "docs" / "prompts" / "generate_question_for_topic.md"
+DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"
+_VOLATILE_TERMS = re.compile(r"\b(today|currently|current|latest|live|price|ranking|standings?)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class QuestionTopic:
-    """A timely or curated topic that can inspire a generated QOTD."""
+    """A researched topic candidate backed by retrieved evidence."""
 
     title: str
     summary: str
@@ -28,26 +33,24 @@ class QuestionTopic:
 
 
 @dataclass(frozen=True)
-class VerificationResult:
-    """Result of checking whether a generated question is safe to send."""
-
-    passed: bool
-    source_urls: tuple[str, ...] = ()
-    source_note: str = ""
-    reason: str = ""
-    confidence: str = "low"
-
-
-@dataclass(frozen=True)
 class GeneratedQuestionCandidate:
-    """A generated question plus internal generation metadata."""
+    """A generated question and the metadata needed to audit it."""
 
     question: Question
     topic_source: QuestionTopic
     category: str
-    subcategory: str = ""
-    topic: str = ""
-    entities: tuple[str, ...] = ()
+    topic: str
+    source_urls: tuple[str, ...]
+    source_evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ResearchedQuestionResult:
+    """Successful end-to-end researched-generation result."""
+
+    candidate: GeneratedQuestionCandidate
+    attempts_used: int
+    rejection_reasons: tuple[str, ...]
 
 
 class QuestionOptionsOutput(BaseModel):
@@ -70,15 +73,28 @@ class GeneratedQuestionOutput(BaseModel):
     options: QuestionOptionsOutput
     correct_option: Literal["A", "B", "C", "D"]
     source_note: str
-    source_url: str
-    subcategory: str
+    source_urls: list[str]
     topic: str
-    entities: list[str]
+
+
+class QuestionGenerator(Protocol):
+    """Generate a question strictly from supplied research evidence."""
+
+    def __call__(
+        self,
+        topic: QuestionTopic,
+        category: str,
+        game_date: date,
+        evidence: tuple[WebSearchResult, ...],
+        rejection_reasons: tuple[str, ...],
+        /,
+    ) -> GeneratedQuestionCandidate:
+        """Return one structured candidate."""
 
 
 @dataclass(frozen=True)
 class LLMQuestionGenerator:
-    """Generate QOTD candidates using a provider-neutral LLM client."""
+    """Generate structured QOTD candidates with an injected LLM client."""
 
     llm_client: LLMClient
     prompt_path: Path = DEFAULT_PROMPT_PATH
@@ -89,28 +105,28 @@ class LLMQuestionGenerator:
         topic: QuestionTopic,
         category: str,
         game_date: date,
+        evidence: tuple[WebSearchResult, ...],
         rejection_reasons: tuple[str, ...],
         /,
     ) -> GeneratedQuestionCandidate:
-        """Generate one structured question candidate from a topic."""
+        """Generate one candidate using only retrieved search evidence."""
 
-        payload = {
-            "game_date": game_date.isoformat(),
-            "category": category,
-            "topic": {
-                "title": topic.title,
-                "summary": topic.summary,
-                "source_url": topic.source_url,
-            },
-            "prior_rejection_reasons": list(rejection_reasons),
-        }
         data = self.llm_client.create_structured_response(
             prompt_path=self.prompt_path,
-            payload=payload,
+            payload={
+                "category": category,
+                "topic": {"title": topic.title, "summary": topic.summary},
+                "evidence": [
+                    {"title": result.title, "url": result.url, "snippet": result.snippet}
+                    for result in evidence
+                ],
+                "prior_rejection_reasons": list(rejection_reasons),
+            },
             response_model=GeneratedQuestionOutput,
             schema_name="qotd_generated_question",
             max_output_tokens=self.max_output_tokens,
         )
+        evidence_by_url = {result.url: result.snippet for result in evidence}
         return GeneratedQuestionCandidate(
             question=Question(
                 game_date=game_date.isoformat(),
@@ -118,153 +134,145 @@ class LLMQuestionGenerator:
                 options=data.options.model_dump(),
                 correct_option=data.correct_option,
                 source_note=data.source_note,
-                source_url=data.source_url,
+                source_url=data.source_urls[0] if data.source_urls else "",
             ),
             topic_source=topic,
             category=category,
-            subcategory=data.subcategory,
             topic=data.topic,
-            entities=tuple(data.entities),
+            source_urls=tuple(data.source_urls),
+            source_evidence=tuple(evidence_by_url.get(url, "") for url in data.source_urls),
         )
 
 
 @dataclass(frozen=True)
-class GenerateQuestionForTopicConfig:
-    """Configuration for generating one question from one topic.
-
-    The caller has already chosen the broad category and topic. This use case
-    owns candidate generation, structural validation, novelty checks against
-    recent QOTD history, and source verification. AI-powered components are
-    injected so the orchestration can be tested without live model or web calls.
-    """
+class GenerateResearchedQuestionConfig:
+    """Configuration for the complete, deliberately small generation flow."""
 
     game_date: date
-    category: str
-    topic: QuestionTopic
-    state_store: StorageClient
-    attempts: int = 2
-    novelty_topic_days: int = 30
-    novelty_entity_days: int = 14
+    categories: tuple[str, ...] = QUESTION_CATEGORIES
+    seed: str | int | None = None
+    attempts: int = 3
+    search_result_limit: int = 5
 
 
-@dataclass(frozen=True)
-class GenerateQuestionForTopicResult:
-    """Result of a successful question generation run."""
-
-    candidate: GeneratedQuestionCandidate
-    verification: VerificationResult
-    rejection_reasons: tuple[str, ...]
+FailureAlert = Callable[[str], None]
 
 
-class QuestionGenerator(Protocol):
-    """Component that generates one question candidate from a topic."""
+def choose_category(categories: tuple[str, ...], *, seed: str | int | None = None) -> str:
+    """Choose one configured category, reproducibly when a seed is supplied."""
 
-    def __call__(
-        self,
-        topic: QuestionTopic,
-        category: str,
-        game_date: date,
-        rejection_reasons: tuple[str, ...],
-        /,
-    ) -> GeneratedQuestionCandidate:
-        """Return one structured question candidate."""
+    cleaned = tuple(category.strip() for category in categories if category.strip())
+    if not cleaned:
+        raise ValueError("at least one category is required")
+    return random.Random(seed).choice(cleaned)
 
 
-class QuestionVerifier(Protocol):
-    """Component that verifies a generated candidate against sources."""
-
-    def __call__(self, candidate: GeneratedQuestionCandidate, /) -> VerificationResult:
-        """Return whether the candidate is safe and sourced enough to send."""
-
-
-def _recent_records(question_records: list[dict[str, Any]], *, game_date: date, days: int) -> list[dict[str, Any]]:
-    cutoff = game_date - timedelta(days=days)
-    recent_records: list[dict[str, Any]] = []
-    for record in question_records:
-        try:
-            record_date = date.fromisoformat(str(record["game_date"]))
-        except (KeyError, TypeError, ValueError):
-            continue
-        if cutoff <= record_date < game_date:
-            recent_records.append(record)
-    return recent_records
+def _valid_search_result(result: WebSearchResult) -> bool:
+    parsed = urlparse(result.url)
+    return bool(
+        result.title.strip()
+        and result.snippet.strip()
+        and parsed.scheme in {"http", "https"}
+        and parsed.netloc
+    )
 
 
-def check_question_novelty(
+def _authority_score(result: WebSearchResult) -> int:
+    host = (urlparse(result.url).hostname or "").casefold()
+    return int(host.endswith(".gov")) * 3 + int(host.endswith(".edu")) * 2 + int(host.endswith(".org"))
+
+
+def discover_topics(
+    search_client: WebSearchClient,
+    category: str,
+    *,
+    limit: int,
+) -> tuple[WebSearchResult, ...]:
+    """Find viable topic evidence, preferring authoritative results."""
+
+    results = search_client.search(
+        f"{category} trivia facts primary authoritative sources",
+        limit=limit,
+    )
+    viable = [result for result in results if _valid_search_result(result) and not _VOLATILE_TERMS.search(result.title)]
+    return tuple(sorted(viable, key=_authority_score, reverse=True))
+
+
+def validate_researched_candidate(
     candidate: GeneratedQuestionCandidate,
-    question_records: list[dict[str, Any]],
+    evidence: tuple[WebSearchResult, ...],
+) -> None:
+    """Reject questions not deterministically supported by retrieved evidence."""
+
+    validate_question(candidate.question)
+    if not candidate.topic.strip():
+        raise ValueError("topic cannot be blank")
+    if _VOLATILE_TERMS.search(candidate.question.prompt):
+        raise ValueError("question relies on a volatile claim")
+    if not candidate.source_urls or len(candidate.source_urls) != len(set(candidate.source_urls)):
+        raise ValueError("question must cite one or more distinct source URLs")
+
+    evidence_by_url = {item.url: item.snippet for item in evidence if _valid_search_result(item)}
+    if any(url not in evidence_by_url for url in candidate.source_urls):
+        raise ValueError("all source URLs must come from retrieved evidence")
+    cited_text = " ".join(evidence_by_url[url] for url in candidate.source_urls).casefold()
+    if not cited_text.strip():
+        raise ValueError("source evidence cannot be blank")
+
+    correct_text = candidate.question.options[candidate.question.correct_option].strip().casefold()
+    supported_options = {
+        label
+        for label, option in candidate.question.options.items()
+        if option.strip().casefold() in cited_text
+    }
+    if candidate.question.correct_option not in supported_options:
+        raise ValueError("retrieved evidence does not support the correct answer")
+    if len(supported_options) != 1:
+        raise ValueError("retrieved evidence supports multiple plausible answers")
+    if correct_text in candidate.question.prompt.casefold():
+        raise ValueError("question prompt leaks the correct answer")
+
+
+def generate_researched_question(
+    config: GenerateResearchedQuestionConfig,
     *,
-    game_date: date,
-    topic_days: int = 30,
-    entity_days: int = 14,
-) -> str | None:
-    """Return a rejection reason if the candidate repeats recent trivia."""
-
-    topic = candidate.topic.strip().casefold()
-    if topic:
-        for record in _recent_records(question_records, game_date=game_date, days=topic_days):
-            if topic == str(record.get("topic") or "").strip().casefold():
-                return f"topic repeated within {topic_days} days: {candidate.topic}"
-
-    entities = {entity.strip().casefold() for entity in candidate.entities if entity.strip()}
-    if entities:
-        for record in _recent_records(question_records, game_date=game_date, days=entity_days):
-            raw_entities = record.get("entities") or ()
-            if isinstance(raw_entities, str):
-                raw_entities = [raw_entities]
-            recent_entities = {str(entity).strip().casefold() for entity in raw_entities if str(entity).strip()}
-            repeated = sorted(entities & recent_entities)
-            if repeated:
-                return f"entity repeated within {entity_days} days: {', '.join(repeated)}"
-    return None
-
-
-def generate_question_for_topic(
-    config: GenerateQuestionForTopicConfig,
-    *,
+    search_client: WebSearchClient,
     generate_question: QuestionGenerator,
-    verify_question: QuestionVerifier,
-) -> GenerateQuestionForTopicResult:
-    """Generate one verified question for the configured category and topic."""
+    alert_organizer: FailureAlert | None = None,
+) -> ResearchedQuestionResult:
+    """Choose, research, generate, and verify a question or fail closed."""
 
     if config.attempts < 1:
         raise ValueError("attempts must be at least 1")
+    if config.search_result_limit < 1:
+        raise ValueError("search_result_limit must be at least 1")
 
-    question_records = config.state_store.read_question_records()
+    seed = config.seed if config.seed is not None else config.game_date.isoformat()
+    rng = random.Random(seed)
+    category = choose_category(config.categories, seed=seed)
     rejection_reasons: list[str] = []
-    for attempt_number in range(1, config.attempts + 1):
+    for attempt in range(1, config.attempts + 1):
+        evidence = discover_topics(search_client, category, limit=config.search_result_limit)
+        if not evidence:
+            rejection_reasons.append(f"attempt {attempt}: search returned no viable evidence")
+            continue
+        topic_result = rng.choice(evidence)
+        topic = QuestionTopic(topic_result.title, topic_result.snippet, topic_result.url)
         try:
             candidate = generate_question(
-                config.topic,
-                config.category,
+                topic,
+                category,
                 config.game_date,
+                evidence,
                 tuple(rejection_reasons),
             )
-            validate_question(candidate.question)
+            validate_researched_candidate(candidate, evidence)
         except ValueError as exc:
-            rejection_reasons.append(f"attempt {attempt_number}: invalid question: {exc}")
+            rejection_reasons.append(f"attempt {attempt}: {exc}")
             continue
+        return ResearchedQuestionResult(candidate, attempt, tuple(rejection_reasons))
 
-        novelty_reason = check_question_novelty(
-            candidate,
-            question_records,
-            game_date=config.game_date,
-            topic_days=config.novelty_topic_days,
-            entity_days=config.novelty_entity_days,
-        )
-        if novelty_reason is not None:
-            rejection_reasons.append(f"attempt {attempt_number}: {novelty_reason}")
-            continue
-
-        verification = verify_question(candidate)
-        if not verification.passed:
-            rejection_reasons.append(f"attempt {attempt_number}: verification failed: {verification.reason}")
-            continue
-
-        return GenerateQuestionForTopicResult(
-            candidate=candidate,
-            verification=verification,
-            rejection_reasons=tuple(rejection_reasons),
-        )
-
-    raise RuntimeError("Could not generate a verified QOTD question for topic")
+    message = "Could not generate a verified QOTD question: " + "; ".join(rejection_reasons)
+    if alert_organizer is not None:
+        alert_organizer(message)
+    raise RuntimeError(message)

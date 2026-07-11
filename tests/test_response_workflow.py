@@ -129,6 +129,7 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
+                participant_emails=("player@example.com",),
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
@@ -165,6 +166,7 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
+                participant_emails=("player@example.com",),
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
@@ -205,6 +207,7 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
+                participant_emails=("exact@example.com", "freeform@example.com"),
                 answer_interpreter_factory=build_interpreter,
                 dry_run=True,
             ),

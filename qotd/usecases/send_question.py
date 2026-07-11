@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Callable
 
 from qotd.domain.contacts import normalize_email_addresses
+from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
 from qotd.domain.models import Question, StoredQuestion
 from qotd.domain.validation import validate_question
@@ -19,6 +21,8 @@ from qotd.presentation.emails import build_participant_email
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
 QuestionGeneratorForDate = Callable[[date, StorageClient], Question]
+LOGGER = logging.getLogger(__name__)
+QUESTION_ALREADY_EXISTS = "question_subject_already_exists"
 
 
 @dataclass(frozen=True)
@@ -46,14 +50,16 @@ class SendQuestionResult:
     email_body: str
     recipient_count: int
     skipped_generated_send: bool = False
+    outcome: str = "sent"
+    reason: str | None = None
+    subject: str | None = None
+    matched_gmail_message_id: str | None = None
 
 
 def cody_sent_query(*, sender: str, game_date: date) -> str:
-    """Build a Gmail query for same-day human-authored QOTD messages."""
+    """Build a Gmail query for the exact dated participant question."""
 
-    after = game_date.strftime("%Y/%m/%d")
-    before = (game_date + timedelta(days=1)).strftime("%Y/%m/%d")
-    return f'from:{sender} subject:QOTD after:{after} before:{before}'
+    return f'in:sent from:{sender} subject:"{question_subject(game_date)}"'
 
 
 def detect_cody_sent_question(
@@ -62,15 +68,16 @@ def detect_cody_sent_question(
     sender: str,
     game_date: date,
 ) -> ParsedEmailMessage | None:
-    """Return the first same-day non-automated QOTD message from the sender."""
+    """Return the first message whose subject exactly identifies the game date."""
 
     sender_email = sender.lower()
+    expected_subject = question_subject(game_date)
     for message in messages:
         if message.sender_email.lower() != sender_email:
             continue
-        if message.message_id.startswith("dry-run:"):
+        if message.subject != expected_subject:
             continue
-        if message.sent_at is not None and message.sent_at.date() != game_date:
+        if message.message_id.startswith("dry-run:"):
             continue
         return message
     return None
@@ -129,12 +136,30 @@ def send_question(
                 gmail_message_id=cody_message.message_id,
                 created_at=(cody_message.sent_at or datetime.now(UTC)).isoformat(),
             )
-            config.state_store.append_question_record(record)
+            already_stored = any(
+                existing.get("game_date") == record.game_date
+                for existing in config.state_store.read_question_records()
+            )
+            if not already_stored:
+                config.state_store.append_question_record(record)
+            subject = question_subject(config.game_date)
+            LOGGER.info(
+                "job=send_question game_date=%s outcome=skipped "
+                "reason=%s subject=%r gmail_message_id=%s",
+                config.game_date.isoformat(),
+                QUESTION_ALREADY_EXISTS,
+                subject,
+                cody_message.message_id,
+            )
             return SendQuestionResult(
                 record=record,
                 email_body=cody_message.body_text,
                 recipient_count=0,
                 skipped_generated_send=True,
+                outcome="skipped",
+                reason=QUESTION_ALREADY_EXISTS,
+                subject=subject,
+                matched_gmail_message_id=cody_message.message_id,
             )
 
     if config.question_generator is None:
@@ -166,4 +191,5 @@ def send_question(
         record=record,
         email_body=email_message.get_content(),
         recipient_count=len(participant_emails),
+        subject=question_subject(config.game_date),
     )

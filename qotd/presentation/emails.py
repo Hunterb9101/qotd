@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from email.message import EmailMessage
 
+from qotd.domain.dates import question_subject
 from qotd.domain.models import OPTION_LABELS, Question
 from qotd.presentation.rendering import render_template
 
@@ -19,7 +20,7 @@ def build_participant_email(question: Question, sender: str, recipients: Sequenc
     message["To"] = sender
     message["Bcc"] = ", ".join(recipients)
     message["From"] = sender
-    message["Subject"] = f"QOTD - {question.game_date}"
+    message["Subject"] = question_subject(question.game_date)
     message.set_content(
         render_template(
             "participant_email.txt.j2",

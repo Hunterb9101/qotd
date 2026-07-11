@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jinja2 import Environment, StrictUndefined
+
 from qotd.external.llm.core import TResponse
 
 
@@ -31,8 +33,8 @@ class OpenAILLMClient:
 
         response = self.client.responses.create(
             model=self.model,
-            instructions=load_prompt(prompt_path),
-            input=json.dumps(payload, sort_keys=True),
+            instructions=render_prompt(prompt_path, payload),
+            input="Return the requested structured result.",
             max_output_tokens=max_output_tokens,
             text={
                 "format": {
@@ -61,6 +63,17 @@ def load_prompt(prompt_path: Path) -> str:
     """Read a markdown prompt file."""
 
     return prompt_path.read_text(encoding="utf-8")
+
+
+def render_prompt(prompt_path: Path, payload: dict[str, Any]) -> str:
+    """Render a Jinja prompt template using the structured request payload."""
+
+    environment = Environment(
+        autoescape=False,
+        keep_trailing_newline=True,
+        undefined=StrictUndefined,
+    )
+    return environment.from_string(load_prompt(prompt_path)).render(**payload)
 
 
 def _parse_response_json(response: Any) -> Any:

@@ -34,6 +34,13 @@ Needs review:
 - None
 {% endfor %}
 
+No eligible reply:
+{% for email in result.no_response -%}
+- {{ email }}
+{% else -%}
+- None
+{% endfor %}
+
 Current standings:
 {% for score in result.standings -%}
 - {{ score.email }}: {{ score.points }}

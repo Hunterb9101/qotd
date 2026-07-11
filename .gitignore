@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Meridian local runtime state
+*.sqlite
+*.sqlite3
+*.db
+.meridian_debug/

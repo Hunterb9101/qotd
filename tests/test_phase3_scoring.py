@@ -181,6 +181,41 @@ class Phase3ScoringTests(unittest.TestCase):
 
         self.assertEqual(result.correct[0].email, "freeform@example.com")
 
+    def test_only_contact_group_members_are_scored_and_all_members_are_reported(self) -> None:
+        result = score_replies(
+            question=stored_question(),
+            replies=[
+                ReplyCandidate(
+                    game_date="2026-07-09",
+                    sender_email="member@example.com",
+                    gmail_message_id="reply-1",
+                    received_at="2026-07-10T06:30:00-06:00",
+                    body_text="B",
+                ),
+                ReplyCandidate(
+                    game_date="2026-07-09",
+                    sender_email="unknown@example.com",
+                    gmail_message_id="reply-2",
+                    received_at="2026-07-10T06:31:00-06:00",
+                    body_text="B",
+                ),
+            ],
+            cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
+            processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
+            eligible_emails=["MEMBER@example.com", "silent@example.com"],
+        )
+
+        self.assertEqual([reply.email for reply in result.correct], ["member@example.com"])
+        self.assertEqual(result.no_response, ("silent@example.com",))
+        self.assertEqual(result.ineligible_senders, ("unknown@example.com",))
+        self.assertEqual(
+            [(standing.email, standing.points) for standing in result.standings],
+            [("member@example.com", 1), ("silent@example.com", 0)],
+        )
+        body = build_organizer_update_body(stored_question(), result)
+        self.assertNotIn("Ineligible senders", body)
+        self.assertNotIn("unknown@example.com", body)
+
     def test_organizer_update_body_contains_scoring_sections(self) -> None:
         result = score_replies(
             question=stored_question(),

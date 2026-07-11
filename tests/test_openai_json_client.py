@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from qotd.external.llm.openai import OpenAILLMClient
+from qotd.external.llm.openai import OpenAILLMClient, render_prompt
 
 
 class ExampleOutput(BaseModel):
@@ -34,6 +34,21 @@ class FakeOpenAIClient:
 
 
 class OpenAILLMClientTests(unittest.TestCase):
+    def test_render_prompt_replaces_nested_values_and_loops(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "prompt.md"
+            prompt_path.write_text(
+                "Topic: {{ topic.title }}\n{% for option in options %}{{ option }} {% endfor %}",
+                encoding="utf-8",
+            )
+
+            rendered = render_prompt(
+                prompt_path,
+                {"topic": {"title": "Jupiter"}, "options": ["A", "B", "C", "D"]},
+            )
+
+        self.assertEqual(rendered, "Topic: Jupiter\nA B C D ")
+
     def test_create_structured_response_uses_pydantic_schema(self) -> None:
         client = FakeOpenAIClient({"option": "A"})
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -51,6 +66,7 @@ class OpenAILLMClientTests(unittest.TestCase):
         self.assertEqual(result.option, "A")
         call = client.responses.calls[0]
         self.assertEqual(call["instructions"], "Return JSON.")
+        self.assertEqual(call["input"], "Return the requested structured result.")
         text_config = cast(dict[str, Any], call["text"])
         self.assertEqual(text_config["format"]["name"], "example_output")
         self.assertIn("option", text_config["format"]["schema"]["properties"])

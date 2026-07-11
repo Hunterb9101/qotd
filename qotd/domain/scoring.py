@@ -51,6 +51,8 @@ class ScoringResult:
     needs_review: tuple[ScoredReply, ...]
     skipped_processing_keys: tuple[str, ...]
     standings: tuple[MonthlyScore, ...]
+    no_response: tuple[str, ...] = ()
+    ineligible_senders: tuple[str, ...] = ()
     monthly_score_updates: tuple[MonthlyScore, ...] = ()
     reply_processing_updates: tuple[ReplyProcessingUpdate, ...] = ()
 
@@ -141,14 +143,28 @@ def score_replies(
     existing_reply_processing_records: list[dict[str, Any]] | None = None,
     existing_monthly_score_records: list[dict[str, Any]] | None = None,
     interpret_answer: Callable[[str], AnswerInterpretation] = parse_deterministic_answer,
+    eligible_emails: list[str] | tuple[str, ...] | None = None,
 ) -> ScoringResult:
     """Score latest eligible replies and return persistence updates."""
 
-    selected_replies = select_latest_eligible_replies(replies, cutoff_at=cutoff_at)
+    eligible = None if eligible_emails is None else {email.strip().lower() for email in eligible_emails}
+    ineligible_senders = sorted(
+        {
+            reply.sender_email.strip().lower()
+            for reply in replies
+            if eligible is not None and reply.sender_email.strip().lower() not in eligible
+        }
+    )
+    eligible_replies = replies if eligible is None else [
+        reply for reply in replies if reply.sender_email.strip().lower() in eligible
+    ]
+    selected_replies = select_latest_eligible_replies(eligible_replies, cutoff_at=cutoff_at)
     existing_keys = processed_keys(existing_reply_processing_records or [])
     game_date = parse_iso_datetime(f"{question.game_date}T00:00:00+00:00").date()
     series = monthly_series(game_date)
     scores = latest_score_map(existing_monthly_score_records or [], series=series)
+    if eligible is not None:
+        scores = {email: scores.get(email, 0) for email in eligible}
 
     correct: list[ScoredReply] = []
     incorrect: list[ScoredReply] = []
@@ -205,6 +221,8 @@ def score_replies(
         needs_review=tuple(needs_review),
         skipped_processing_keys=tuple(skipped_keys),
         standings=standings_from_scores(series, scores),
+        no_response=tuple(sorted((eligible or set()) - set(selected_replies))),
+        ineligible_senders=tuple(ineligible_senders),
         monthly_score_updates=tuple(monthly_score_updates),
         reply_processing_updates=tuple(reply_processing_updates),
     )

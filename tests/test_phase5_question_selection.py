@@ -2,163 +2,194 @@ from __future__ import annotations
 
 import unittest
 from datetime import date
-from typing import Any
 
-from qotd.domain.categories import CategoryPolicy, category_priority, recent_category_counts
 from qotd.domain.models import Question
-from qotd.usecases.determine_category_order import DetermineCategoryOrderConfig, determine_category_order
+from qotd.external.web_search.core import WebSearchResult
 from qotd.usecases.generate_question_for_topic import (
+    GenerateResearchedQuestionConfig,
     GeneratedQuestionCandidate,
-    GenerateQuestionForTopicConfig,
     QuestionTopic,
-    VerificationResult,
-    check_question_novelty,
-    generate_question_for_topic,
+    choose_category,
+    generate_researched_question,
+    validate_researched_candidate,
 )
-from qotd.usecases.send_question import SendQuestionConfig, send_question
-from tests.support import InMemoryStateStore
 
 
-def question_for(game_date: date, *, prompt: str = "Which state produces the most cheese?") -> Question:
-    return Question(
-        game_date=game_date.isoformat(),
-        prompt=prompt,
-        options={
-            "A": "California",
-            "B": "New York",
-            "C": "Wisconsin",
-            "D": "Texas",
-        },
-        correct_option="C",
-        source_note="USDA data identifies Wisconsin as the top cheese-producing state.",
-        source_url="https://example.com/cheese-production",
+class FakeWebSearchClient:
+    def __init__(self, responses: list[tuple[WebSearchResult, ...]]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, int]] = []
+
+    def search(self, query: str, *, limit: int = 5) -> tuple[WebSearchResult, ...]:
+        self.calls.append((query, limit))
+        index = min(len(self.calls) - 1, len(self.responses) - 1)
+        return self.responses[index]
+
+
+def evidence(*, snippet: str = "USDA reports Wisconsin produced the most cheese in the United States.") -> WebSearchResult:
+    return WebSearchResult(
+        title="Cheese production facts",
+        url="https://www.usda.gov/cheese-production",
+        snippet=snippet,
     )
 
 
-def candidate_for(
-    game_date: date,
-    *,
-    category: str,
-    topic_source: QuestionTopic | None = None,
-    topic: str = "U.S. cheese production",
-    entities: tuple[str, ...] = ("Wisconsin",),
-) -> GeneratedQuestionCandidate:
+def candidate_for(topic: QuestionTopic, category: str, game_date: date) -> GeneratedQuestionCandidate:
+    result = evidence()
     return GeneratedQuestionCandidate(
-        question=question_for(game_date),
-        topic_source=topic_source
-        or QuestionTopic("National Cheddar Day", "A food holiday.", "https://example.com/cheddar-day"),
+        question=Question(
+            game_date=game_date.isoformat(),
+            prompt="Which state produces the most cheese in the United States?",
+            options={"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
+            correct_option="C",
+            source_note="USDA production data supports the answer.",
+            source_url=result.url,
+        ),
+        topic_source=topic,
         category=category,
-        subcategory="Cheese",
-        topic=topic,
-        entities=entities,
+        topic="U.S. cheese production",
+        source_urls=(result.url,),
+        source_evidence=(result.snippet,),
     )
 
 
-class Phase5QuestionSelectionTests(unittest.TestCase):
-    def test_recent_category_counts_include_underused_zero_categories(self) -> None:
-        records: list[dict[str, Any]] = [
-            {"game_date": "2026-07-08", "category": "Food & Drink"},
-            {"game_date": "2026-06-01", "category": "History"},
-            {"game_date": "2026-07-07", "category": ""},
-        ]
-        policy = CategoryPolicy(categories=("Food & Drink", "History"), lookback_days=30)
+class ResearchedQuestionGenerationTests(unittest.TestCase):
+    def test_category_selection_is_reproducible_with_game_date_seed(self) -> None:
+        categories = ("Science", "History", "Food")
 
-        counts = recent_category_counts(records, game_date=date(2026, 7, 10), policy=policy)
-
-        self.assertEqual(counts, {"Food & Drink": 1, "History": 0})
-
-    def test_category_priority_is_deterministic_for_ties(self) -> None:
-        policy = CategoryPolicy(categories=("Science", "History", "Food"), lookback_days=30)
-
-        first = category_priority([], game_date=date(2026, 7, 10), policy=policy)
-        second = category_priority([], game_date=date(2026, 7, 10), policy=policy)
+        first = choose_category(categories, seed=date(2026, 7, 10).isoformat())
+        second = choose_category(categories, seed=date(2026, 7, 10).isoformat())
 
         self.assertEqual(first, second)
-        self.assertEqual(set(first), {"Science", "History", "Food"})
+        self.assertIn(first, categories)
 
-    def test_determine_category_order_reads_state_store(self) -> None:
-        store = InMemoryStateStore()
-        store.question_records.append({"game_date": "2026-07-09", "category": "Food & Drink"})
+    def test_flow_searches_category_and_returns_source_backed_contract(self) -> None:
+        search = FakeWebSearchClient([(evidence(),)])
 
-        result = determine_category_order(
-            DetermineCategoryOrderConfig(
+        result = generate_researched_question(
+            GenerateResearchedQuestionConfig(
                 game_date=date(2026, 7, 10),
-                state_store=store,
-                category_policy=CategoryPolicy(categories=("History", "Food & Drink"), lookback_days=30),
-            )
+                categories=("Food & Drink",),
+                seed="stable",
+            ),
+            search_client=search,
+            generate_question=lambda topic, category, game_date, results, reasons: candidate_for(
+                topic, category, game_date
+            ),
         )
 
-        self.assertEqual(result.categories, ("History", "Food & Drink"))
+        self.assertEqual(result.candidate.category, "Food & Drink")
+        self.assertEqual(result.candidate.topic, "U.S. cheese production")
+        self.assertEqual(result.candidate.source_urls, (evidence().url,))
+        self.assertIn("primary authoritative sources", search.calls[0][0])
 
-    def test_generate_question_for_topic_retries_after_failed_verification(self) -> None:
-        store = InMemoryStateStore()
-        topic_source = QuestionTopic("National Cheddar Day", "A food holiday.", "https://example.com/cheddar-day")
-        generated_attempts: list[int] = []
+    def test_whole_flow_retries_after_unsupported_answer(self) -> None:
+        unsupported = evidence(snippet="USDA publishes annual dairy statistics.")
+        search = FakeWebSearchClient([(unsupported,), (evidence(),)])
+        generated_reasons: list[tuple[str, ...]] = []
 
-        def generate_question(
+        def generate(
             topic: QuestionTopic,
             category: str,
             game_date: date,
-            rejection_reasons: tuple[str, ...],
+            results: tuple[WebSearchResult, ...],
+            reasons: tuple[str, ...],
         ) -> GeneratedQuestionCandidate:
-            generated_attempts.append(len(rejection_reasons))
-            return candidate_for(game_date, category=category, topic_source=topic)
-
-        def verify_question(candidate: GeneratedQuestionCandidate) -> VerificationResult:
-            if len(generated_attempts) == 1:
-                return VerificationResult(passed=False, reason="source does not support the answer")
-            return VerificationResult(passed=True, source_urls=(candidate.question.source_url,), confidence="high")
-
-        result = generate_question_for_topic(
-            GenerateQuestionForTopicConfig(
-                game_date=date(2026, 7, 10),
-                category="Food & Drink",
-                topic=topic_source,
-                state_store=store,
-                attempts=2,
-            ),
-            generate_question=generate_question,
-            verify_question=verify_question,
-        )
-
-        self.assertEqual(generated_attempts, [0, 1])
-        self.assertEqual(result.candidate.topic_source.title, "National Cheddar Day")
-        self.assertIn("verification failed", result.rejection_reasons[0])
-
-    def test_novelty_rejects_recent_entity_repeat(self) -> None:
-        records = [{"game_date": "2026-07-01", "entities": ["Wisconsin"], "topic": "Dairy brands"}]
-
-        reason = check_question_novelty(
-            candidate_for(date(2026, 7, 10), category="Food & Drink", topic="Cheese production"),
-            records,
-            game_date=date(2026, 7, 10),
-            topic_days=30,
-            entity_days=14,
-        )
-
-        self.assertEqual(reason, "entity repeated within 14 days: wisconsin")
-
-    def test_send_question_can_use_injected_generator(self) -> None:
-        store = InMemoryStateStore()
-
-        result = send_question(
-            SendQuestionConfig(
-                game_date=date(2026, 7, 10),
-                sender="***SECRET***",
-                contact_group_name="QOTD Participants",
-                state_store=store,
-                gmail_user="***SECRET***",
-                oauth_client_id="",
-                oauth_client_secret="",
-                oauth_refresh_token="",
-                participant_emails=("player@example.com",),
-                question_generator=lambda game_date, state_store: question_for(game_date, prompt="Injected question?"),
-                dry_run=True,
+            generated_reasons.append(reasons)
+            candidate = candidate_for(topic, category, game_date)
+            selected = results[0]
+            return GeneratedQuestionCandidate(
+                question=Question(
+                    game_date=candidate.question.game_date,
+                    prompt=candidate.question.prompt,
+                    options=candidate.question.options,
+                    correct_option=candidate.question.correct_option,
+                    source_note=candidate.question.source_note,
+                    source_url=selected.url,
+                ),
+                topic_source=topic,
+                category=category,
+                topic=candidate.topic,
+                source_urls=(selected.url,),
+                source_evidence=(selected.snippet,),
             )
+
+        result = generate_researched_question(
+            GenerateResearchedQuestionConfig(date(2026, 7, 10), categories=("Food",), attempts=2),
+            search_client=search,
+            generate_question=generate,
         )
 
-        self.assertEqual(result.record.prompt, "Injected question?")
-        self.assertIn("Injected question?", result.email_body)
+        self.assertEqual(result.attempts_used, 2)
+        self.assertIn("does not support", result.rejection_reasons[0])
+        self.assertEqual(len(generated_reasons), 2)
+        self.assertTrue(generated_reasons[1])
+
+    def test_exhaustion_alerts_and_fails_closed(self) -> None:
+        search = FakeWebSearchClient([()])
+        alerts: list[str] = []
+
+        with self.assertRaisesRegex(RuntimeError, "no viable evidence"):
+            generate_researched_question(
+                GenerateResearchedQuestionConfig(date(2026, 7, 10), categories=("History",), attempts=2),
+                search_client=search,
+                generate_question=lambda *args: candidate_for(args[0], args[1], args[2]),
+                alert_organizer=alerts.append,
+            )
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(len(search.calls), 2)
+
+    def test_validation_rejects_unretrieved_url_and_multiple_plausible_answers(self) -> None:
+        topic = QuestionTopic(evidence().title, evidence().snippet, evidence().url)
+        candidate = candidate_for(topic, "Food", date(2026, 7, 10))
+
+        with self.assertRaisesRegex(ValueError, "come from retrieved evidence"):
+            validate_researched_candidate(candidate, ())
+
+        ambiguous = evidence(snippet="Wisconsin and California both produce the most cheese.")
+        with self.assertRaisesRegex(ValueError, "multiple plausible"):
+            validate_researched_candidate(candidate, (ambiguous,))
+
+    def test_validation_rejects_answer_leakage_and_volatile_claims(self) -> None:
+        topic = QuestionTopic(evidence().title, evidence().snippet, evidence().url)
+        base = candidate_for(topic, "Food", date(2026, 7, 10))
+
+        leaked = GeneratedQuestionCandidate(
+            question=Question(
+                game_date=base.question.game_date,
+                prompt="Why is Wisconsin the biggest cheese producer?",
+                options=base.question.options,
+                correct_option="C",
+                source_note=base.question.source_note,
+                source_url=base.question.source_url,
+            ),
+            topic_source=topic,
+            category="Food",
+            topic=base.topic,
+            source_urls=base.source_urls,
+            source_evidence=base.source_evidence,
+        )
+        with self.assertRaisesRegex(ValueError, "leaks"):
+            validate_researched_candidate(leaked, (evidence(),))
+
+        volatile = GeneratedQuestionCandidate(
+            question=Question(
+                game_date=base.question.game_date,
+                prompt="Which state currently produces the most cheese?",
+                options=base.question.options,
+                correct_option="C",
+                source_note=base.question.source_note,
+                source_url=base.question.source_url,
+            ),
+            topic_source=topic,
+            category="Food",
+            topic=base.topic,
+            source_urls=base.source_urls,
+            source_evidence=base.source_evidence,
+        )
+        with self.assertRaisesRegex(ValueError, "volatile"):
+            validate_researched_candidate(volatile, (evidence(),))
 
 
 if __name__ == "__main__":

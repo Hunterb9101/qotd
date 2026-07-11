@@ -6,7 +6,9 @@ import argparse
 import os
 from datetime import date
 
+from qotd.domain.dates import current_game_date
 from qotd.external.llm.openai import build_openai_llm_client
+from qotd.external.web_search.openai import build_openai_web_search_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.usecases.correct_answer import ProcessCorrectAnswerEmailsConfig, process_correct_answer_emails
 from qotd.usecases.adjust_score import (
@@ -17,11 +19,18 @@ from qotd.usecases.adjust_score import (
 )
 from qotd.usecases.score_responses import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
+from qotd.usecases.generate_question_for_topic import (
+    GenerateResearchedQuestionConfig,
+    LLMQuestionGenerator,
+    generate_researched_question,
+)
 
 
 DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"
 DEFAULT_BIGQUERY_DATASET = "qotd"
 DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_GENERATOR_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-4.1-mini"
 
 
 def parse_date(value: str) -> date:
@@ -71,17 +80,27 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     send_parser = subparsers.add_parser("send-question", help="Generate and send today's QOTD email")
-    send_parser.add_argument("--date", type=parse_date, default=date.today())
+    send_parser.add_argument("--date", type=parse_date, default=current_game_date())
     send_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
     send_parser.add_argument("--dry-run-recipient", action="append", default=[])
     send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
     send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    send_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
+    send_parser.add_argument(
+        "--openai-generator-model",
+        default=os.environ.get("OPENAI_GENERATOR_MODEL", DEFAULT_OPENAI_GENERATOR_MODEL),
+    )
+    send_parser.add_argument(
+        "--openai-web-search-model",
+        default=os.environ.get("OPENAI_WEB_SEARCH_MODEL", DEFAULT_OPENAI_WEB_SEARCH_MODEL),
+    )
     add_google_options(send_parser)
     send_parser.add_argument("--dry-run", action="store_true")
 
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
     score_parser.add_argument("--game-date", type=parse_date, default=None)
+    score_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
     score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
     score_parser.add_argument("--organizer", default=os.environ.get("QOTD_ORGANIZER", os.environ.get("QOTD_SENDER", "***SECRET***")))
     score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
@@ -147,6 +166,22 @@ def main() -> None:
             oauth_client_secret=args.oauth_client_secret,
             oauth_refresh_token=args.oauth_refresh_token,
         )
+        def generate_question(game_date: date, _state_store: object):
+            llm_generator = LLMQuestionGenerator(
+                llm_client=build_openai_llm_client(
+                    api_key=args.openai_api_key,
+                    model=args.openai_generator_model,
+                )
+            )
+            search_client = build_openai_web_search_client(
+                api_key=args.openai_api_key,
+                model=args.openai_web_search_model,
+            )
+            return generate_researched_question(
+                GenerateResearchedQuestionConfig(game_date=game_date),
+                search_client=search_client,
+                generate_question=llm_generator,
+            ).candidate.question
 
         send_result = send_question(
             SendQuestionConfig(
@@ -159,6 +194,7 @@ def main() -> None:
                 oauth_client_secret=args.oauth_client_secret,
                 oauth_refresh_token=args.oauth_refresh_token,
                 participant_emails=tuple(args.dry_run_recipient),
+                question_generator=generate_question,
                 dry_run=args.dry_run,
             )
         )
@@ -191,6 +227,7 @@ def main() -> None:
                 oauth_client_secret=args.oauth_client_secret,
                 oauth_refresh_token=args.oauth_refresh_token,
                 state_store=state_store,
+                contact_group_name=args.contact_group_name,
                 answer_interpreter_factory=None
                 if args.disable_ai_answer_interpreter
                 else lambda question: LLMAnswerInterpreter(

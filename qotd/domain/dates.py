@@ -16,6 +16,19 @@ def is_weekday(value: date) -> bool:
     return value.weekday() < 5
 
 
+def question_subject(game_date: date | str) -> str:
+    """Return the canonical participant-question subject for a game date."""
+
+    date_text = game_date.isoformat() if isinstance(game_date, date) else game_date
+    return f"QOTD - {date_text}"
+
+
+def current_game_date() -> date:
+    """Return today's game date in the configured Mountain time zone."""
+
+    return datetime.now(MOUNTAIN_TIME).date()
+
+
 def previous_game_day(scoring_date: date) -> date:
     """Return the previous weekday game date for a scoring date."""
 
