@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
+from dataclasses import asdict
 from datetime import date
 
 from qotd.domain.dates import current_game_date
@@ -20,8 +22,10 @@ from qotd.usecases.adjust_score import (
 from qotd.usecases.score_responses import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.usecases.generate_question_for_topic import (
+    GenerateQuestionSamplesConfig,
     GenerateResearchedQuestionConfig,
     LLMQuestionGenerator,
+    generate_question_samples,
     generate_researched_question,
 )
 
@@ -37,6 +41,27 @@ def parse_date(value: str) -> date:
     """Parse an ISO date argument."""
 
     return date.fromisoformat(value)
+
+
+def nonblank_text(value: str) -> str:
+    """Parse a required non-blank text argument."""
+
+    cleaned = value.strip()
+    if not cleaned:
+        raise argparse.ArgumentTypeError("must not be blank")
+    return cleaned
+
+
+def positive_int(value: str) -> int:
+    """Parse an integer greater than zero."""
+
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def env_value(name: str, fallback: str | None = None) -> str:
@@ -96,6 +121,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_google_options(send_parser)
     send_parser.add_argument("--dry-run", action="store_true")
+
+    samples_parser = subparsers.add_parser(
+        "generate-samples",
+        help="Generate reviewable question candidates without sending or storing them",
+    )
+    samples_parser.add_argument("--topic", required=True, type=nonblank_text)
+    samples_parser.add_argument("--count", required=True, type=positive_int)
+    samples_parser.add_argument("--date", type=parse_date, default=current_game_date())
+    samples_parser.add_argument("--category", type=nonblank_text, default="General Knowledge")
+    samples_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
+    samples_parser.add_argument(
+        "--openai-generator-model",
+        default=os.environ.get("OPENAI_GENERATOR_MODEL", DEFAULT_OPENAI_GENERATOR_MODEL),
+    )
+    samples_parser.add_argument(
+        "--openai-web-search-model",
+        default=os.environ.get("OPENAI_WEB_SEARCH_MODEL", DEFAULT_OPENAI_WEB_SEARCH_MODEL),
+    )
 
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
@@ -205,6 +248,29 @@ def main() -> None:
         if args.dry_run:
             print()
             print(send_result.email_body)
+
+    elif args.command == "generate-samples":
+        if not args.openai_api_key:
+            parser.error("generate-samples requires OPENAI_API_KEY or --openai-api-key")
+        candidates = generate_question_samples(
+            GenerateQuestionSamplesConfig(
+                topic=args.topic,
+                sample_count=args.count,
+                game_date=args.date,
+                category=args.category,
+            ),
+            search_client=build_openai_web_search_client(
+                api_key=args.openai_api_key,
+                model=args.openai_web_search_model,
+            ),
+            generate_question=LLMQuestionGenerator(
+                llm_client=build_openai_llm_client(
+                    api_key=args.openai_api_key,
+                    model=args.openai_generator_model,
+                )
+            ),
+        )
+        print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))
 
     elif args.command == "score-responses":
         require_google_options(args)

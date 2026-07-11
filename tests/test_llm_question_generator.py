@@ -8,7 +8,14 @@ from typing import Any, cast
 
 from qotd.external.llm.openai import render_prompt
 from qotd.external.web_search.core import WebSearchResult
-from qotd.usecases.generate_question_for_topic import DEFAULT_PROMPT_PATH, LLMQuestionGenerator, QuestionTopic
+from qotd.usecases.generate_question_for_topic import (
+    DEFAULT_PROMPT_PATH,
+    GenerateQuestionSamplesConfig,
+    LLMQuestionGenerator,
+    QuestionGenerator,
+    QuestionTopic,
+    generate_question_samples,
+)
 
 
 class FakeLLMClient:
@@ -37,7 +44,65 @@ class FakeLLMClient:
         return response_model.model_validate(self.output)
 
 
+class FakeSearchClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def search(self, query: str, *, limit: int = 5) -> tuple[WebSearchResult, ...]:
+        self.calls.append((query, limit))
+        return (
+            WebSearchResult(
+                title="Cheese data",
+                url="https://example.com/cheese-production",
+                snippet="Wisconsin produces the most cheese.",
+            ),
+        )
+
+
 class LLMQuestionGeneratorTests(unittest.TestCase):
+    def test_generate_samples_uses_supplied_topic_and_requested_count(self) -> None:
+        search = FakeSearchClient()
+        calls: list[tuple[QuestionTopic, str]] = []
+
+        def generate(topic, category, game_date, evidence, rejection_reasons):
+            calls.append((topic, category))
+            return LLMQuestionGenerator(FakeLLMClient({
+                "prompt": "Which state produces the most cheese?",
+                "options": {"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
+                "correct_option": "C",
+                "source_note": "USDA cheese production data.",
+                "source_urls": ["https://example.com/cheese-production"],
+                "topic": "U.S. cheese production",
+            }))(topic, category, game_date, evidence, rejection_reasons)
+
+        candidates = generate_question_samples(
+            GenerateQuestionSamplesConfig(
+                topic="Cheese history",
+                sample_count=3,
+                game_date=date(2026, 7, 11),
+            ),
+            search_client=search,
+            generate_question=generate,
+        )
+
+        self.assertEqual(len(candidates), 3)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0][0].title, "Cheese history")
+        self.assertIn("Cheese history", search.calls[0][0])
+
+    def test_generate_samples_validates_topic_and_count(self) -> None:
+        with self.assertRaisesRegex(ValueError, "topic cannot be blank"):
+            generate_question_samples(
+                GenerateQuestionSamplesConfig("  ", 1, date(2026, 7, 11)),
+                search_client=FakeSearchClient(),
+                generate_question=cast(QuestionGenerator, lambda *args: None),
+            )
+        with self.assertRaisesRegex(ValueError, "sample count must be at least 1"):
+            generate_question_samples(
+                GenerateQuestionSamplesConfig("cheese", 0, date(2026, 7, 11)),
+                search_client=FakeSearchClient(),
+                generate_question=cast(QuestionGenerator, lambda *args: None),
+            )
     def test_default_prompt_is_packaged_and_contains_generation_guidance(self) -> None:
         prompt = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 

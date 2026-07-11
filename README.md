@@ -27,6 +27,30 @@ The OAuth refresh token must include Gmail read, send, and modify access so the 
 
 Scoring uses OpenAI to interpret freeform replies that are not a plain `A`, `B`, `C`, or `D`. Use `OPENAI_INTERPRETER_MODEL` to override the default interpreter model. For local deterministic-only scoring, pass `--disable-ai-answer-interpreter`.
 
+## Developer AI Tools
+
+Generate several question candidates for a topic without sending email or reading or writing production state:
+
+```bash
+python -m qotd generate-samples --topic "cheese history" --count 3
+```
+
+The command requires `OPENAI_API_KEY`, uses `OPENAI_GENERATOR_MODEL` and `OPENAI_WEB_SEARCH_MODEL` when set, and prints structured JSON containing each question, four options, its correct option, and source metadata.
+
+Run the offline test suite with:
+
+```bash
+pytest tests/
+```
+
+Live answer-interpreter evaluations live in the mirrored `tests/usecases/test_score_responses.py` module, carry the `intg` pytest marker, and only run when selected explicitly:
+
+```bash
+OPENAI_API_KEY="..." pytest -m intg
+```
+
+Use `OPENAI_INTERPRETER_MODEL` to select the live evaluation model. Explicit integration runs fail with a configuration error when `OPENAI_API_KEY` is missing.
+
 ## Email Management Jobs
 
 The GitHub Actions workflow `.github/workflows/qotd-score-adjustments.yml` runs management email processing at `13:55 UTC` on weekdays, five minutes before the QOTD scoring workflow. It processes correct-answer requests first, then score-adjustment requests. It shares a concurrency group with the scoring workflow so state writes do not overlap.

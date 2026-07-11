@@ -14,3 +14,10 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
 qotd = ["prompts/*.md", "presentation/templates/*.j2"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not intg'"
+testpaths = ["tests"]
+markers = [
+    "intg: live integration tests that require external credentials",
+]

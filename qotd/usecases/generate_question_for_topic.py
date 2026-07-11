@@ -1,4 +1,4 @@
-"""Research, generate, and verify one QOTD question."""
+"""Research, generate, and verify QOTD questions."""
 
 from __future__ import annotations
 
@@ -155,7 +155,64 @@ class GenerateResearchedQuestionConfig:
     search_result_limit: int = 5
 
 
+@dataclass(frozen=True)
+class GenerateQuestionSamplesConfig:
+    """Configuration for isolated, topic-driven question sampling."""
+
+    topic: str
+    sample_count: int
+    game_date: date
+    category: str = "General Knowledge"
+    search_result_limit: int = 5
+
+
 FailureAlert = Callable[[str], None]
+
+
+def generate_question_samples(
+    config: GenerateQuestionSamplesConfig,
+    *,
+    search_client: WebSearchClient,
+    generate_question: QuestionGenerator,
+) -> tuple[GeneratedQuestionCandidate, ...]:
+    """Generate reviewable candidates without sending or persisting them."""
+
+    topic_text = config.topic.strip()
+    if not topic_text:
+        raise ValueError("topic cannot be blank")
+    if config.sample_count < 1:
+        raise ValueError("sample count must be at least 1")
+    if config.search_result_limit < 1:
+        raise ValueError("search result limit must be at least 1")
+
+    evidence = tuple(
+        result
+        for result in search_client.search(
+            f"{topic_text} trivia facts primary authoritative sources",
+            limit=config.search_result_limit,
+        )
+        if _valid_search_result(result)
+    )
+    if not evidence:
+        raise RuntimeError(f"No usable source evidence found for topic: {topic_text}")
+
+    topic = QuestionTopic(
+        title=topic_text,
+        summary="Research evidence supplied for developer question sampling.",
+        source_url=evidence[0].url,
+    )
+    candidates = []
+    for _ in range(config.sample_count):
+        candidates.append(
+            generate_question(
+                topic,
+                config.category,
+                config.game_date,
+                evidence,
+                (),
+            )
+        )
+    return tuple(candidates)
 
 
 def choose_category(categories: tuple[str, ...], *, seed: str | int | None = None) -> str:

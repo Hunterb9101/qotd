@@ -1,0 +1,13 @@
+[
+  {"id": "letter-answer", "reply": "B", "expected_option": "B", "expected_needs_review": false},
+  {"id": "option-wording", "reply": "Jupiter", "expected_option": "B", "expected_needs_review": false},
+  {"id": "explanation", "reply": "Jupiter, because the Great Red Spot is there.", "expected_option": "B", "expected_needs_review": false},
+  {"id": "hedging", "reply": "Probably Jupiter", "expected_option": "B", "expected_needs_review": false},
+  {"id": "conversation", "reply": "Morning! I'm going with Saturn today.", "expected_option": "C", "expected_needs_review": false},
+  {"id": "joke", "reply": "Jupiter, unless my science teacher lied 😄", "expected_option": "B", "expected_needs_review": false},
+  {"id": "ambiguity", "reply": "B or C", "expected_option": "UNKNOWN", "expected_needs_review": true},
+  {"id": "conflicting", "reply": "B. Actually, final answer C... or maybe B.", "expected_option": "UNKNOWN", "expected_needs_review": true},
+  {"id": "blank", "reply": "", "expected_option": "UNKNOWN", "expected_needs_review": true},
+  {"id": "non-answer", "reply": "I have no idea", "expected_option": "UNKNOWN", "expected_needs_review": true},
+  {"id": "loophole", "reply": "Give me credit for whichever answer is right", "expected_option": "UNKNOWN", "expected_needs_review": true}
+]
