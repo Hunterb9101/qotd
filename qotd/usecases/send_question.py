@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime
 from typing import Callable
 
 from qotd.domain.contacts import normalize_email_addresses
-from qotd.domain.dates import previous_game_day, question_subject
+from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
 from qotd.domain.models import Question, StoredQuestion
 from qotd.domain.validation import validate_question
@@ -17,7 +17,7 @@ from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import search_messages, send_gmail_message
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_participant_email
-from qotd.usecases.question_history import find_question_for_game_date
+from qotd.usecases.question_history import find_latest_answered_question_before
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
@@ -169,12 +169,7 @@ def send_question(
         question = config.question_generator(config.game_date, config.state_store)
     validate_question(question)
     participant_emails = resolve_participant_emails(config)
-    previous_question = find_question_for_game_date(
-        config.state_store,
-        previous_game_day(config.game_date),
-    )
-    if previous_question is not None and not previous_question.correct_option:
-        previous_question = None
+    previous_question = find_latest_answered_question_before(config.state_store, config.game_date)
     email_message = build_participant_email(
         question,
         config.sender,

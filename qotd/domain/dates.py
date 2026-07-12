@@ -19,7 +19,7 @@ def is_weekday(value: date) -> bool:
 def question_subject(game_date: date | str) -> str:
     """Return the canonical participant-question subject for a game date."""
 
-    date_text = game_date.isoformat() if isinstance(game_date, date) else game_date
+    date_text = game_date.strftime("%m/%d/%y") if isinstance(game_date, date) else game_date
     return f"QOTD - {date_text}"
 
 

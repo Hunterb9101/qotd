@@ -120,7 +120,7 @@ class Phase1SendTests(unittest.TestCase):
         self.assertNotIn(question.source_url, body)
         self.assertNotIn(question.source_note, body)
 
-    def test_send_includes_previous_weekdays_resolved_answer(self) -> None:
+    def test_send_includes_latest_answered_question(self) -> None:
         store = InMemoryStateStore()
         store.append_question_record(
             StoredQuestion(
@@ -164,6 +164,54 @@ class Phase1SendTests(unittest.TestCase):
         self.assertIn("Previous QOTD answer (2026-07-10): C. Gamma", result.email_body)
         self.assertIn("Fun fact: Manual question", result.email_body)
         self.assertNotIn("friday-source", result.email_body)
+
+    def test_send_skips_newer_incomplete_question_for_latest_answered_recap(self) -> None:
+        store = InMemoryStateStore()
+        store.append_question_record(
+            StoredQuestion(
+                game_date="2026-07-08",
+                prompt="Completed question",
+                options={"A": "Alpha", "B": "Beta", "C": "Gamma", "D": "Delta"},
+                correct_option="B",
+                source_note="The older complete fun fact",
+                source_url="https://example.com/complete",
+                source="generated",
+                gmail_message_id="completed-message",
+                created_at="2026-07-08T18:00:00+00:00",
+            )
+        )
+        store.append_question_record(
+            StoredQuestion(
+                game_date="2026-07-09",
+                prompt="Unresolved question",
+                options={"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+                correct_option="",
+                source_note="Do not show this fact",
+                source_url="",
+                source="manual",
+                gmail_message_id="unresolved-message",
+                created_at="2026-07-09T18:00:00+00:00",
+            )
+        )
+
+        result = send_question(
+            SendQuestionConfig(
+                game_date=date(2026, 7, 10),
+                sender="***SECRET***",
+                contact_group_name="QOTD Participants",
+                state_store=store,
+                gmail_user="***SECRET***",
+                oauth_client_id="",
+                oauth_client_secret="",
+                oauth_refresh_token="",
+                participant_emails=("player@example.com",),
+                dry_run=True,
+            )
+        )
+
+        self.assertIn("Previous QOTD answer (2026-07-08): B. Beta", result.email_body)
+        self.assertIn("Fun fact: The older complete fun fact", result.email_body)
+        self.assertNotIn("Do not show this fact", result.email_body)
 
     def test_send_omits_recap_when_previous_answer_is_unresolved(self) -> None:
         store = InMemoryStateStore()

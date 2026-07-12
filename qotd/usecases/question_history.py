@@ -46,3 +46,25 @@ def load_question_for_game_date(state_store: StorageClient, game_date: date) -> 
     if question is None:
         raise RuntimeError(f"No stored QOTD question found for {game_date.isoformat()}")
     return question
+
+
+def find_latest_answered_question_before(
+    state_store: StorageClient,
+    game_date: date,
+) -> StoredQuestion | None:
+    """Return the most recent earlier question with a displayable answer."""
+
+    cutoff = game_date.isoformat()
+    earlier_dates = sorted(
+        {
+            str(record["game_date"])
+            for record in state_store.read_question_records()
+            if str(record.get("game_date", "")) < cutoff
+        },
+        reverse=True,
+    )
+    for earlier_date in earlier_dates:
+        question = find_question_for_game_date(state_store, date.fromisoformat(earlier_date))
+        if question is not None and question.correct_option in question.options:
+            return question
+    return None
