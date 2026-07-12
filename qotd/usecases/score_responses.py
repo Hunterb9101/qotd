@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,6 +26,7 @@ from qotd.external.llm.core import LLMClient
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_organizer_email
 from qotd.presentation.organizer_updates import build_organizer_update_body
+from qotd.usecases.question_history import load_question_for_game_date
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
@@ -127,51 +128,6 @@ def today_mountain() -> date:
     """Return today's date in Mountain time."""
 
     return datetime.now(MOUNTAIN_TIME).date()
-
-
-def question_from_record(record: dict[str, Any]) -> StoredQuestion:
-    """Build a stored question from a JSON record."""
-
-    return StoredQuestion(
-        game_date=str(record["game_date"]),
-        prompt=str(record["prompt"]),
-        options=dict(record["options"]),
-        correct_option=str(record["correct_option"]),
-        source_note=str(record["source_note"]),
-        source_url=str(record["source_url"]),
-        source=str(record["source"]),
-        gmail_message_id=str(record["gmail_message_id"]),
-        created_at=str(record["created_at"]),
-    )
-
-
-def load_question_for_game_date(state_store: StorageClient, game_date: date) -> StoredQuestion:
-    """Load the latest stored question for a game date."""
-
-    game_date_text = game_date.isoformat()
-    matches = [
-        question_from_record(record)
-        for record in state_store.read_question_records()
-        if record.get("game_date") == game_date_text
-    ]
-    if not matches:
-        raise RuntimeError(f"No stored QOTD question found for {game_date_text}")
-    question = matches[-1]
-    updates = state_store.read_correct_answer_updates(game_date=game_date_text)
-    if updates:
-        latest = updates[-1]
-        return StoredQuestion(
-            game_date=question.game_date,
-            prompt=question.prompt,
-            options=question.options,
-            correct_option=str(latest["correct_option"]),
-            source_note=question.source_note,
-            source_url=str(latest["source_url"]),
-            source=question.source,
-            gmail_message_id=question.gmail_message_id,
-            created_at=question.created_at,
-        )
-    return question
 
 
 def gmail_reply_query(*, game_date: date, scoring_date: date) -> str:

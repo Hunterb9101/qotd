@@ -1,3 +1,9 @@
+{% if previous_question -%}
+Previous QOTD answer ({{ previous_question.game_date }}): {{ previous_question.correct_option }}. {{ previous_question.options[previous_question.correct_option] }}
+{% if previous_question.source_note %}Fun fact: {{ previous_question.source_note }}
+{% endif %}
+
+{% endif -%}
 {{ question.prompt }}
 
 {% for label in option_labels %}

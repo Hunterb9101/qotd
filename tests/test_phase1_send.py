@@ -8,6 +8,7 @@ from unittest.mock import patch
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
+from qotd.domain.models import CorrectAnswerUpdate, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.auth.gcp import GOOGLE_TOKEN_URI, build_oauth_credentials
 from qotd.external.contacts.google import extract_email_addresses, find_contact_group
@@ -118,6 +119,84 @@ class Phase1SendTests(unittest.TestCase):
         self.assertNotIn("Correct answer", body)
         self.assertNotIn(question.source_url, body)
         self.assertNotIn(question.source_note, body)
+
+    def test_send_includes_previous_weekdays_resolved_answer(self) -> None:
+        store = InMemoryStateStore()
+        store.append_question_record(
+            StoredQuestion(
+                game_date="2026-07-10",
+                prompt="Friday's question",
+                options={"A": "Alpha", "B": "Beta", "C": "Gamma", "D": "Delta"},
+                correct_option="",
+                source_note="Manual question",
+                source_url="",
+                source="manual",
+                gmail_message_id="friday-message",
+                created_at="2026-07-10T18:00:00+00:00",
+            )
+        )
+        store.append_correct_answer_update(
+            CorrectAnswerUpdate(
+                game_date="2026-07-10",
+                correct_option="C",
+                source_url="https://example.com/friday-source",
+                source_gmail_message_id="answer-message",
+                idempotency_key="answer:2026-07-10",
+                created_at="2026-07-13T13:00:00+00:00",
+            )
+        )
+
+        result = send_question(
+            SendQuestionConfig(
+                game_date=date(2026, 7, 13),
+                sender="***SECRET***",
+                contact_group_name="QOTD Participants",
+                state_store=store,
+                gmail_user="***SECRET***",
+                oauth_client_id="",
+                oauth_client_secret="",
+                oauth_refresh_token="",
+                participant_emails=("player@example.com",),
+                dry_run=True,
+            )
+        )
+
+        self.assertIn("Previous QOTD answer (2026-07-10): C. Gamma", result.email_body)
+        self.assertIn("Fun fact: Manual question", result.email_body)
+        self.assertNotIn("friday-source", result.email_body)
+
+    def test_send_omits_recap_when_previous_answer_is_unresolved(self) -> None:
+        store = InMemoryStateStore()
+        store.append_question_record(
+            StoredQuestion(
+                game_date="2026-07-09",
+                prompt="Manual question",
+                options={},
+                correct_option="",
+                source_note="Correct answer pending",
+                source_url="",
+                source="manual",
+                gmail_message_id="manual-message",
+                created_at="2026-07-09T18:00:00+00:00",
+            )
+        )
+
+        result = send_question(
+            SendQuestionConfig(
+                game_date=date(2026, 7, 10),
+                sender="***SECRET***",
+                contact_group_name="QOTD Participants",
+                state_store=store,
+                gmail_user="***SECRET***",
+                oauth_client_id="",
+                oauth_client_secret="",
+                oauth_refresh_token="",
+                participant_emails=("player@example.com",),
+                dry_run=True,
+            )
+        )
+
+        self.assertNotIn("Previous QOTD answer", result.email_body)
 
     def test_contact_group_matching_uses_exact_name(self) -> None:
         group = find_contact_group(

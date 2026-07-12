@@ -38,6 +38,22 @@ class StoredQuestion:
     created_at: str
 
     @classmethod
+    def from_record(cls, record: dict[str, Any]) -> StoredQuestion:
+        """Create a stored question from a persistent storage record."""
+
+        return cls(
+            game_date=str(record["game_date"]),
+            prompt=str(record["prompt"]),
+            options=dict(record["options"]),
+            correct_option=str(record["correct_option"]),
+            source_note=str(record["source_note"]),
+            source_url=str(record["source_url"]),
+            source=str(record["source"]),
+            gmail_message_id=str(record["gmail_message_id"]),
+            created_at=str(record["created_at"]),
+        )
+
+    @classmethod
     def from_question(cls, question: Question, gmail_message_id: str, created_at: datetime) -> StoredQuestion:
         """Create a persisted record from a generated question."""
 
