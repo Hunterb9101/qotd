@@ -18,8 +18,8 @@ from qotd.presentation.emails import build_participant_email
 from qotd.usecases.send_question import (
     QUESTION_ALREADY_EXISTS,
     SendQuestionConfig,
-    cody_sent_query,
-    detect_cody_sent_question,
+    organizer_sent_query,
+    detect_organizer_sent_question,
     send_question,
 )
 from tests.support import InMemoryStateStore
@@ -49,7 +49,7 @@ class Phase1SendTests(unittest.TestCase):
 
     def test_manual_send_query_uses_exact_dated_subject(self) -> None:
         self.assertEqual(
-            cody_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9)),
+            organizer_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9)),
             'in:sent from:sender@example.com subject:"QOTD - 2026-07-09"',
         )
 
@@ -61,7 +61,7 @@ class Phase1SendTests(unittest.TestCase):
         ]
 
         self.assertIsNone(
-            detect_cody_sent_question(
+            detect_organizer_sent_question(
                 messages,
                 sender="sender@example.com",
                 game_date=date(2026, 7, 9),

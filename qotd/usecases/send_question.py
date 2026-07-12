@@ -58,13 +58,13 @@ class SendQuestionResult:
     matched_gmail_message_id: str | None = None
 
 
-def cody_sent_query(*, sender: str, game_date: date) -> str:
+def organizer_sent_query(*, sender: str, game_date: date) -> str:
     """Build a Gmail query for the exact dated participant question."""
 
     return f'in:sent from:{sender} subject:"{question_subject(game_date)}"'
 
 
-def detect_cody_sent_question(
+def detect_organizer_sent_question(
     messages: list[ParsedEmailMessage],
     *,
     sender: str,
@@ -121,8 +121,8 @@ def send_question(
             )
 
     if fetch_messages is not None:
-        cody_message = detect_cody_sent_question(
-            fetch_messages(cody_sent_query(sender=config.sender, game_date=config.game_date)),
+        cody_message = detect_organizer_sent_question(
+            fetch_messages(organizer_sent_query(sender=config.sender, game_date=config.game_date)),
             sender=config.sender,
             game_date=config.game_date,
         )

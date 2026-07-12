@@ -14,7 +14,7 @@ from qotd.usecases.correct_answer import (
     process_correct_answer_emails,
 )
 from qotd.usecases.score_responses import ScoreResponsesConfig, load_question_for_game_date, score_responses
-from qotd.usecases.send_question import SendQuestionConfig, cody_sent_query, send_question
+from qotd.usecases.send_question import SendQuestionConfig, organizer_sent_query, send_question
 from tests.support import InMemoryStateStore
 
 
@@ -40,7 +40,7 @@ class Phase4CompletionTests(unittest.TestCase):
         self.assertTrue(is_final_weekday_of_month(date(2026, 10, 30)))
         self.assertFalse(is_final_weekday_of_month(date(2026, 10, 29)))
 
-    def test_cody_sent_question_is_stored_and_generated_send_is_skipped(self) -> None:
+    def test_organizer_sent_question_is_stored_and_generated_send_is_skipped(self) -> None:
         store = InMemoryStateStore()
 
         result = send_question(
@@ -65,7 +65,7 @@ class Phase4CompletionTests(unittest.TestCase):
                     body_text="Manual question body",
                 )
             ]
-            if query == cody_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9))
+            if query == organizer_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9))
             else [],
         )
 
