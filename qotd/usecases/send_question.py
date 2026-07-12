@@ -18,6 +18,7 @@ from qotd.external.email.gmail import search_messages, send_gmail_message
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_participant_email
 from qotd.usecases.question_history import find_latest_answered_question_before
+from qotd.usecases.score_history import ParticipantResults, load_participant_results
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
@@ -170,11 +171,19 @@ def send_question(
     validate_question(question)
     participant_emails = resolve_participant_emails(config)
     previous_question = find_latest_answered_question_before(config.state_store, config.game_date)
+    participant_results = ParticipantResults(point_earners=(), standings=())
+    if previous_question is not None:
+        participant_results = load_participant_results(
+            config.state_store,
+            date.fromisoformat(previous_question.game_date),
+        )
     email_message = build_participant_email(
         question,
         config.sender,
         participant_emails,
+        point_earners=participant_results.point_earners,
         previous_question=previous_question,
+        standings=participant_results.standings,
     )
 
     if config.dry_run:

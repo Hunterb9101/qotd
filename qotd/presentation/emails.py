@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from email.message import EmailMessage
 
 from qotd.domain.dates import question_subject
-from qotd.domain.models import OPTION_LABELS, Question, StoredQuestion
+from qotd.domain.models import OPTION_LABELS, MonthlyScore, Question, StoredQuestion
 from qotd.presentation.rendering import render_template
 
 
@@ -16,6 +16,8 @@ def build_participant_email(
     recipients: Sequence[str],
     *,
     previous_question: StoredQuestion | None = None,
+    point_earners: Sequence[str] = (),
+    standings: Sequence[MonthlyScore] = (),
 ) -> EmailMessage:
     """Build the participant-facing QOTD email without answer metadata."""
 
@@ -31,8 +33,10 @@ def build_participant_email(
         render_template(
             "participant_email.txt.j2",
             option_labels=OPTION_LABELS,
+            point_earners=point_earners,
             previous_question=previous_question,
             question=question,
+            standings=standings,
         )
     )
     return message

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
-from qotd.domain.models import CorrectAnswerUpdate, StoredQuestion
+from qotd.domain.models import CorrectAnswerUpdate, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.auth.gcp import GOOGLE_TOKEN_URI, build_oauth_credentials
 from qotd.external.contacts.google import extract_email_addresses, find_contact_group
@@ -145,6 +145,30 @@ class Phase1SendTests(unittest.TestCase):
                 created_at="2026-07-13T13:00:00+00:00",
             )
         )
+        store.append_reply_processing_record(
+            ReplyProcessingRecord(
+                game_date="2026-07-10",
+                email="winner@example.com",
+                latest_gmail_message_id="winner-reply",
+                points_awarded=1,
+                needs_audit=False,
+                processed_at="2026-07-13T14:00:00+00:00",
+            ),
+            interpreted_option="C",
+        )
+        store.append_reply_processing_record(
+            ReplyProcessingRecord(
+                game_date="2026-07-10",
+                email="other@example.com",
+                latest_gmail_message_id="other-reply",
+                points_awarded=0,
+                needs_audit=False,
+                processed_at="2026-07-13T14:00:00+00:00",
+            ),
+            interpreted_option="A",
+        )
+        store.append_monthly_score(MonthlyScore(series="0726", email="other@example.com", points=2))
+        store.append_monthly_score(MonthlyScore(series="0726", email="winner@example.com", points=4))
 
         result = send_question(
             SendQuestionConfig(
@@ -161,8 +185,12 @@ class Phase1SendTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("Previous QOTD answer (2026-07-10): C. Gamma", result.email_body)
-        self.assertIn("Fun fact: Manual question", result.email_body)
+        self.assertIn("The correct answer on 2026-07-10 is C. Gamma", result.email_body)
+        self.assertIn("Manual question", result.email_body)
+        self.assertIn("Points earned:\n- winner@example.com", result.email_body)
+        self.assertNotIn("- other@example.com", result.email_body)
+        self.assertIn("1. winner@example.com — 4", result.email_body)
+        self.assertIn("2. other@example.com — 2", result.email_body)
         self.assertNotIn("friday-source", result.email_body)
 
     def test_send_skips_newer_incomplete_question_for_latest_answered_recap(self) -> None:
@@ -209,8 +237,8 @@ class Phase1SendTests(unittest.TestCase):
             )
         )
 
-        self.assertIn("Previous QOTD answer (2026-07-08): B. Beta", result.email_body)
-        self.assertIn("Fun fact: The older complete fun fact", result.email_body)
+        self.assertIn("The correct answer on 2026-07-08 is B. Beta", result.email_body)
+        self.assertIn("The older complete fun fact", result.email_body)
         self.assertNotIn("Do not show this fact", result.email_body)
 
     def test_send_omits_recap_when_previous_answer_is_unresolved(self) -> None:
@@ -244,7 +272,7 @@ class Phase1SendTests(unittest.TestCase):
             )
         )
 
-        self.assertNotIn("Previous QOTD answer", result.email_body)
+        self.assertNotIn("The correct answer on", result.email_body)
 
     def test_contact_group_matching_uses_exact_name(self) -> None:
         group = find_contact_group(
