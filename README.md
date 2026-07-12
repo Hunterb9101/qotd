@@ -1,9 +1,54 @@
-# QOTD Automation
+# Automated Question of The Day
 
-Command-line workflows for generating, scoring, and manually correcting QOTD scores.
+## Context
+
+In high school, a friend of mine ran a daily trivia question via email during our computer science class. It was highly informal and was super enjoyable. However, as we grew older, the question of the day (QOTD) became inconsistent, and eventually died out.
+
+Fast forward a decade, and I realized that we could use AI to automate much of the workflow while keeping the original charm of QOTD alive. While it would have been simpler to automate outright, I added a number of tools to allow my friend to add questions in as he pleases, and AI will pick up the days that he doesn't feel like writing them up.
+
+## Features
+
+### Full Automation via Github Actions
+
+- Automated scoring cutoff at 6 AM PDT
+- Scheduled scoring summary sent to the organizer email at 7 AM PDT
+- Automated trivia question sent to participants at 2 PM PDT
+- Manage mailing list through Contacts group
+
+### Human-in-the-Loop Controls
+- Adjust any participant's score
+- AI respects any QOTD email sent out by an organizer.
 
 ## Setup
 
+### Email
+
+It's highly recommended to create a new Gmail account to manage the QOTD workflow. No other email providers are supported at this time.
+
+We will also be using the google account to access the Google Cloud Platform (GCP).
+
+### OpenAI Developer Account
+We'll need an API key to discover topics and generate questions.
+
+### Google Cloud Platform
+
+We'll need to enable a number of API's for use, including the `Contacts API` and `Gmail API`. The following permissions will be needed via OAuth Access (A service account will only work if you have your own domain):
+- `.../auth/bigquery` (Database access)
+- `.../auth/gmail.modify` (Add label to manually-sent QOTD emails)
+- `.../auth/gmail.readonly` (Score participant responses)
+- `.../auth/gmail.send` (Send QOTD)
+- `.../auth/contacts.readonly` (Mailing List)
+
+### Database
+
+Given the small-scale operations and the ephemeral nature of Github Actions, I opted to utilize a BigQuery dataset to manage the state, keeping track of prior asked questions and participant scores. Note that you will need to provide billing (but stay on free tier) to be able to perform DML SQL commands.
+
+### Github Actions
+
+This repository relies heavily on the workflows defined in `.github/workflows`. You'll need to create a `production` environment, and populate with 4 environment secrets and one environment variable. 3 variables (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`) will be determined by `scripts/generate_oauth_refresh_token.py`. Sign in with your QOTD organizer email. We will also need an `OPENAI_API_KEY` from the OpenAI platform. In addition, you'll need to get the `GOOGLE_CLOUD_PROJECT` to point the action at the necessary GCP project.
+
+##  For Developers
+### Local Installation
 Install dependencies in a virtual environment:
 
 ```bash
@@ -22,8 +67,6 @@ export GOOGLE_CLOUD_PROJECT="..."
 export BIGQUERY_DATASET="qotd"
 export OPENAI_API_KEY="..."
 ```
-
-The OAuth refresh token must include Gmail read, send, and modify access so the adjustment job can find requests, reply to them, and remove the unread label after handling.
 
 Scoring uses OpenAI to interpret freeform replies that are not a plain `A`, `B`, `C`, or `D`. Use `OPENAI_INTERPRETER_MODEL` to override the default interpreter model. For local deterministic-only scoring, pass `--disable-ai-answer-interpreter`.
 
@@ -51,13 +94,13 @@ OPENAI_API_KEY="..." pytest -m intg
 
 Use `OPENAI_INTERPRETER_MODEL` to select the live evaluation model. Explicit integration runs fail with a configuration error when `OPENAI_API_KEY` is missing.
 
-## Email Management Jobs
+### Email Management Jobs
 
 The GitHub Actions workflow `.github/workflows/qotd-score-adjustments.yml` runs management email processing at `13:55 UTC` on weekdays, five minutes before the QOTD scoring workflow. It processes correct-answer requests first, then score-adjustment requests. It shares a concurrency group with the scoring workflow so state writes do not overlap.
 
-## Correct Answer Emails
+### Correct Answer Emails
 
-When Cody manually sends a QOTD from `***SECRET***`, send a correct-answer email before scoring:
+When a manual email is sent, send a correct-answer email before scoring:
 
 ```text
 Action: set-correct-answer
@@ -75,7 +118,7 @@ python -m qotd process-correct-answers \
   --organizer organizer@example.com
 ```
 
-## Email Score Adjustments
+### Email Score Adjustments
 
 The intended organizer workflow is email-based. Send a plain-text request to the QOTD admin mailbox:
 
@@ -115,7 +158,7 @@ python -m qotd process-score-adjustments \
   --dry-run
 ```
 
-## Local Score Adjustments
+### Local Score Adjustments
 
 Use `adjust-score` only for development or emergency corrections when email processing is not appropriate.
 
@@ -176,7 +219,7 @@ python -m qotd adjust-score \
   --dry-run
 ```
 
-## Manual Scoring Reruns
+### Manual Scoring Reruns
 
 Rerun scoring for a specific game date with:
 
