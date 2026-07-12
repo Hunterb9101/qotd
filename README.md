@@ -35,7 +35,7 @@ Generate several question candidates for a topic without sending email or readin
 python -m qotd generate-samples --topic "cheese history" --count 3
 ```
 
-The command requires `OPENAI_API_KEY`, uses `OPENAI_GENERATOR_MODEL` and `OPENAI_WEB_SEARCH_MODEL` when set, and prints structured JSON containing each question, four options, its correct option, and source metadata.
+The command requires `OPENAI_API_KEY`, uses `OPENAI_GENERATOR_MODEL` when set, and lets the generator research each candidate with web search. Samples choose from the defined trivia categories without repeating a category until the set is exhausted; pass `--category` to use one category for the whole batch. The command prints structured JSON containing each question, four options, its correct option, and source metadata.
 
 Run the offline test suite with:
 

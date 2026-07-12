@@ -10,6 +10,7 @@ from qotd.usecases.generate_question_for_topic import (
     GeneratedQuestionCandidate,
     QuestionTopic,
     choose_category,
+    choose_lens_pairs,
     generate_researched_question,
     validate_researched_candidate,
 )
@@ -81,7 +82,38 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
         self.assertEqual(result.candidate.category, "Food & Drink")
         self.assertEqual(result.candidate.topic, "U.S. cheese production")
         self.assertEqual(result.candidate.source_urls, (evidence().url,))
-        self.assertIn("primary authoritative sources", search.calls[0][0])
+        self.assertIn("timely creative directions", search.calls[0][0])
+        expected_lenses = choose_lens_pairs(1, seed="stable")[0]
+        self.assertEqual(result.candidate.topic_source.lenses, expected_lenses)
+        self.assertIn(f"subject lens: {expected_lenses[0]}", search.calls[0][0])
+        self.assertIn(f"story angle: {expected_lenses[1]}", search.calls[0][0])
+
+    def test_flow_uses_direction_only_topic_then_accepts_generator_research(self) -> None:
+        direction = WebSearchResult(
+            title="Super Mario",
+            url="",
+            snippet="A new release is a timely hook into the character's history.",
+        )
+        search = FakeWebSearchClient([(direction,)])
+        generation_evidence: list[tuple[WebSearchResult, ...]] = []
+
+        def generate(topic, category, game_date, results, reasons):
+            generation_evidence.append(results)
+            return candidate_for(topic, category, game_date)
+
+        result = generate_researched_question(
+            GenerateResearchedQuestionConfig(
+                game_date=date(2026, 7, 10),
+                categories=("Games & Leisure",),
+                seed="stable",
+            ),
+            search_client=search,
+            generate_question=generate,
+        )
+
+        self.assertEqual(result.candidate.topic_source.title, "Super Mario")
+        self.assertEqual(result.candidate.topic_source.source_url, "")
+        self.assertEqual(generation_evidence, [()])
 
     def test_whole_flow_retries_after_unsupported_answer(self) -> None:
         unsupported = evidence(snippet="USDA publishes annual dairy statistics.")
@@ -124,6 +156,30 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
         self.assertIn("does not support", result.rejection_reasons[0])
         self.assertEqual(len(generated_reasons), 2)
         self.assertTrue(generated_reasons[1])
+
+    def test_whole_flow_retries_after_llm_quality_rejection(self) -> None:
+        search = FakeWebSearchClient([(evidence(),), (evidence(),)])
+        evaluations = iter((("The wording gives away Wisconsin.",), ()))
+        generated_reasons: list[tuple[str, ...]] = []
+
+        def generate(topic, category, game_date, results, reasons):
+            generated_reasons.append(reasons)
+            return candidate_for(topic, category, game_date)
+
+        result = generate_researched_question(
+            GenerateResearchedQuestionConfig(
+                date(2026, 7, 10),
+                categories=("Food",),
+                attempts=2,
+            ),
+            search_client=search,
+            generate_question=generate,
+            evaluate_question=lambda candidate: next(evaluations),
+        )
+
+        self.assertEqual(result.attempts_used, 2)
+        self.assertIn("gives away", result.rejection_reasons[0])
+        self.assertIn("gives away", generated_reasons[1][0])
 
     def test_exhaustion_alerts_and_fails_closed(self) -> None:
         search = FakeWebSearchClient([()])

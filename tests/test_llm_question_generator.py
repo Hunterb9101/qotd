@@ -6,14 +6,25 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+from qotd.domain.categories import QUESTION_CATEGORIES
+from qotd.domain.models import Question
 from qotd.external.llm.openai import render_prompt
 from qotd.external.web_search.core import WebSearchResult
 from qotd.usecases.generate_question_for_topic import (
+    DEFAULT_EVALUATION_PROMPT_PATH,
     DEFAULT_PROMPT_PATH,
+    DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH,
     GenerateQuestionSamplesConfig,
+    GeneratedQuestionCandidate,
+    LLMQuestionEvaluator,
     LLMQuestionGenerator,
+    LLMTopicDiscoverer,
+    QUESTION_STORY_ANGLES,
+    QUESTION_SUBJECT_LENSES,
     QuestionGenerator,
     QuestionTopic,
+    choose_categories,
+    choose_lens_pairs,
     generate_question_samples,
 )
 
@@ -31,6 +42,7 @@ class FakeLLMClient:
         response_model: type[Any],
         schema_name: str,
         max_output_tokens: int,
+        tools: tuple[dict[str, Any], ...] = (),
     ) -> Any:
         self.calls.append(
             {
@@ -39,6 +51,7 @@ class FakeLLMClient:
                 "response_model": response_model,
                 "schema_name": schema_name,
                 "max_output_tokens": max_output_tokens,
+                "tools": tools,
             }
         )
         return response_model.model_validate(self.output)
@@ -60,8 +73,24 @@ class FakeSearchClient:
 
 
 class LLMQuestionGeneratorTests(unittest.TestCase):
+    def candidate(self, topic: QuestionTopic, category: str = "Food & Drink") -> GeneratedQuestionCandidate:
+        return GeneratedQuestionCandidate(
+            question=Question(
+                game_date="2026-07-11",
+                prompt="Which state produces the most cheese?",
+                options={"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
+                correct_option="C",
+                source_note="USDA cheese production data.",
+                source_url="https://example.com/cheese-production",
+            ),
+            topic_source=topic,
+            category=category,
+            topic="U.S. cheese production",
+            source_urls=("https://example.com/cheese-production",),
+            source_evidence=("Wisconsin produces the most cheese.",),
+        )
+
     def test_generate_samples_uses_supplied_topic_and_requested_count(self) -> None:
-        search = FakeSearchClient()
         calls: list[tuple[QuestionTopic, str]] = []
 
         def generate(topic, category, game_date, evidence, rejection_reasons):
@@ -71,7 +100,12 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                 "options": {"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
                 "correct_option": "C",
                 "source_note": "USDA cheese production data.",
-                "source_urls": ["https://example.com/cheese-production"],
+                "sources": [
+                    {
+                        "url": "https://example.com/cheese-production",
+                        "evidence": "Wisconsin produces the most cheese.",
+                    }
+                ],
                 "topic": "U.S. cheese production",
             }))(topic, category, game_date, evidence, rejection_reasons)
 
@@ -80,39 +114,162 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                 topic="Cheese history",
                 sample_count=3,
                 game_date=date(2026, 7, 11),
+                seed="test-seed",
             ),
-            search_client=search,
             generate_question=generate,
         )
 
         self.assertEqual(len(candidates), 3)
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0][0].title, "Cheese history")
-        self.assertIn("Cheese history", search.calls[0][0])
+        self.assertEqual(calls[0][0].summary, "Research this topic with web search before writing the question.")
+        self.assertEqual(len({call[0].lenses for call in calls}), 3)
+        self.assertTrue(all(len(call[0].lenses) == 2 for call in calls))
+        self.assertEqual(len({category for _, category in calls}), 3)
+        self.assertTrue(all(category in QUESTION_CATEGORIES for _, category in calls))
+
+    def test_choose_lens_pairs_is_reproducible_and_unique_within_a_batch(self) -> None:
+        first = choose_lens_pairs(4, seed="same-seed")
+        second = choose_lens_pairs(4, seed="same-seed")
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(set(first)), 4)
+        self.assertTrue(all(subject in QUESTION_SUBJECT_LENSES for subject, _ in first))
+        self.assertTrue(all(angle in QUESTION_STORY_ANGLES for _, angle in first))
+
+    def test_choose_categories_is_reproducible_and_avoids_early_repeats(self) -> None:
+        first = choose_categories(4, seed="same-seed")
+        second = choose_categories(4, seed="same-seed")
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(set(first)), 4)
+        self.assertTrue(all(category in QUESTION_CATEGORIES for category in first))
 
     def test_generate_samples_validates_topic_and_count(self) -> None:
         with self.assertRaisesRegex(ValueError, "topic cannot be blank"):
             generate_question_samples(
                 GenerateQuestionSamplesConfig("  ", 1, date(2026, 7, 11)),
-                search_client=FakeSearchClient(),
-                generate_question=cast(QuestionGenerator, lambda *args: None),
-            )
+            generate_question=cast(QuestionGenerator, lambda *args: None),
+        )
         with self.assertRaisesRegex(ValueError, "sample count must be at least 1"):
             generate_question_samples(
                 GenerateQuestionSamplesConfig("cheese", 0, date(2026, 7, 11)),
-                search_client=FakeSearchClient(),
                 generate_question=cast(QuestionGenerator, lambda *args: None),
             )
+
+    def test_generate_samples_retries_after_llm_quality_rejection(self) -> None:
+        topic_seen: list[tuple[str, ...]] = []
+        generation_reasons: list[tuple[str, ...]] = []
+        evaluations = iter((("The prompt gives away the answer.",), ()))
+
+        def generate(topic, category, game_date, evidence, rejection_reasons):
+            topic_seen.append(topic.lenses)
+            generation_reasons.append(rejection_reasons)
+            return self.candidate(topic, category)
+
+        candidates = generate_question_samples(
+            GenerateQuestionSamplesConfig(
+                "cheese",
+                1,
+                date(2026, 7, 11),
+                category="Food & Drink",
+                attempts=2,
+            ),
+            generate_question=generate,
+            evaluate_question=lambda candidate: next(evaluations),
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(len(topic_seen), 2)
+        self.assertEqual(topic_seen[0], topic_seen[1])
+        self.assertFalse(generation_reasons[0])
+        self.assertIn("gives away", generation_reasons[1][0])
+
+    def test_llm_evaluator_returns_actionable_rejection_reasons(self) -> None:
+        client = FakeLLMClient(
+            {
+                "approved": False,
+                "rejection_reasons": ["The prompt paraphrases the correct answer."],
+            }
+        )
+        topic = QuestionTopic("Cheese", "A food topic.", "")
+        evaluator = LLMQuestionEvaluator(llm_client=client)
+
+        reasons = evaluator(self.candidate(topic))
+
+        self.assertEqual(reasons, ("The prompt paraphrases the correct answer.",))
+        call = client.calls[0]
+        self.assertEqual(call["prompt_path"], DEFAULT_EVALUATION_PROMPT_PATH)
+        self.assertEqual(call["schema_name"], "qotd_question_quality_review")
+        self.assertEqual(call["payload"]["question"]["correct_answer"], "Wisconsin")
+        self.assertEqual(call["tools"], ())
+
+    def test_evaluation_prompt_checks_answer_leakage_and_unfair_options(self) -> None:
+        prompt = DEFAULT_EVALUATION_PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("close paraphrase", prompt)
+        self.assertIn("points conspicuously to the correct choice", prompt)
+        self.assertIn("More than one option reasonably answers", prompt)
+
+    def test_topic_discoverer_uses_web_search_and_maps_entity_topics(self) -> None:
+        client = FakeLLMClient(
+            {
+                "topics": [
+                    {
+                        "title": "Super Mario",
+                        "summary": "A new Mario release can lead into the character's history.",
+                    },
+                    {
+                        "title": "The Legend of Zelda",
+                        "summary": "A new Zelda release can lead into the series' influences.",
+                    },
+                ]
+            }
+        )
+        discoverer = LLMTopicDiscoverer(llm_client=client)
+
+        topics = discoverer.search("Games & Leisure; as of date: 2026-07-11", limit=1)
+
+        self.assertEqual(len(topics), 1)
+        self.assertEqual(topics[0].title, "Super Mario")
+        self.assertEqual(topics[0].snippet, "A new Mario release can lead into the character's history.")
+        self.assertEqual(topics[0].url, "")
+        call = client.calls[0]
+        self.assertEqual(call["prompt_path"], DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH)
+        self.assertEqual(call["payload"]["limit"], 1)
+        self.assertEqual(call["tools"], ({"type": "web_search"},))
+
+    def test_topic_discovery_prompt_defines_timely_entity_lanes(self) -> None:
+        prompt = DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("Approachable current events", prompt)
+        self.assertIn("self-proclaimed food days", prompt)
+        self.assertIn("New entertainment releases", prompt)
+        self.assertIn("do not use an article headline", prompt)
+        self.assertIn("brainstorming, not question research", prompt)
+
     def test_default_prompt_is_packaged_and_contains_generation_guidance(self) -> None:
         prompt = DEFAULT_PROMPT_PATH.read_text(encoding="utf-8")
 
         self.assertIn("exactly four distinct options labeled A, B, C, and D", prompt)
         self.assertIn("exactly one option is correct", prompt)
-        self.assertIn("supplied source evidence supports that answer", prompt)
+        self.assertIn("retrieved source evidence must support only that correct answer", prompt)
         self.assertIn("informal, conversational, and human", prompt)
         self.assertIn("accessible-to-moderate difficulty", prompt)
         self.assertIn("what is surprising, strange, or amusing", prompt)
+        self.assertIn("Use the subject lens to choose the human, cultural, or practical part", prompt)
+        self.assertIn("Use the story angle to choose what makes the fact memorable", prompt)
+        self.assertIn("It may itself be the correct answer", prompt)
+        self.assertIn("do not name the topic in the question", prompt)
+        self.assertIn("Do not default to first, earliest, oldest", prompt)
+        self.assertIn("Do not treat other names, examples, foods, places, dates, or facts", prompt)
+        self.assertIn("Invent three plausible but incorrect distractors", prompt)
+        self.assertIn("same semantic type", prompt)
+        self.assertIn("must support only that correct answer among the four options", prompt)
         self.assertIn("academic, institutional, encyclopedic, or promotional", prompt)
+        self.assertIn("avoid legalese, bureaucratic phrasing", prompt)
+        self.assertIn("describe its practical effect in plain language", prompt)
+        self.assertIn("Do not mention statute numbers, code sections", prompt)
         self.assertIn("sender's personality remain visible", prompt)
         self.assertIn("grim, partisan, medical, legal, or highly volatile", prompt)
         self.assertIn("Do not reveal or strongly hint", prompt)
@@ -128,6 +285,10 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                     "title": "National Cheddar Day",
                     "summary": "A food holiday.",
                 },
+                "lenses": [
+                    "language, slang, nicknames, and catchphrases",
+                    "a crossover between different cultures or fields",
+                ],
                 "evidence": [
                     {
                         "title": "USDA cheese data",
@@ -144,6 +305,25 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         self.assertIn("USDA cheese data", rendered)
         self.assertIn("Wisconsin produces the most cheese.", rendered)
         self.assertIn("The first answer was ambiguous.", rendered)
+        self.assertIn("Subject lens: language, slang, nicknames, and catchphrases", rendered)
+        self.assertIn("Story angle: a crossover between different cultures or fields", rendered)
+
+    def test_default_prompt_requires_web_research_without_supplied_evidence(self) -> None:
+        rendered = render_prompt(
+            DEFAULT_PROMPT_PATH,
+            {
+                "category": "Food & Drink",
+                "topic": {"title": "Cheese history", "summary": "Research the topic."},
+                "lenses": [
+                    "traditions, celebrations, and rituals",
+                    "an unusual exception or quirky rule",
+                ],
+                "evidence": [],
+                "prior_rejection_reasons": [],
+            },
+        )
+
+        self.assertIn("Use web search to research the topic", rendered)
 
     def test_llm_generator_maps_structured_response_to_candidate(self) -> None:
         output: dict[str, Any] = {
@@ -156,7 +336,12 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
             },
             "correct_option": "C",
             "source_note": "USDA data identifies Wisconsin as the top cheese-producing state.",
-            "source_urls": ["https://example.com/cheese-production"],
+            "sources": [
+                {
+                    "url": "https://example.com/cheese-production",
+                    "evidence": "Wisconsin produces the most cheese.",
+                }
+            ],
             "topic": "U.S. cheese production",
         }
         client = FakeLLMClient(output)
@@ -167,6 +352,7 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
             generator = LLMQuestionGenerator(
                 llm_client=client,
                 prompt_path=prompt_path,
+                use_web_search=True,
             )
             topic = QuestionTopic(
                 title="National Cheddar Day",
@@ -200,16 +386,18 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         call = client.calls[0]
         self.assertEqual(call["prompt_path"], prompt_path)
         self.assertEqual(call["schema_name"], "qotd_generated_question")
+        self.assertEqual(call["tools"], ({"type": "web_search"},))
         request_payload = cast(dict[str, Any], call["payload"])
         self.assertEqual(
             set(request_payload),
-            {"category", "topic", "evidence", "prior_rejection_reasons"},
+            {"category", "topic", "lenses", "evidence", "prior_rejection_reasons"},
         )
         self.assertEqual(request_payload["category"], "Food & Drink")
         self.assertEqual(
             request_payload["topic"],
             {"title": "National Cheddar Day", "summary": "A food holiday."},
         )
+        self.assertEqual(request_payload["lenses"], [])
         self.assertEqual(request_payload["evidence"][0]["title"], "Cheese data")
         self.assertEqual(request_payload["prior_rejection_reasons"], ["previous failure"])
 

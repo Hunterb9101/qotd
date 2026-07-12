@@ -6,6 +6,7 @@ import random
 import re
 from dataclasses import dataclass
 from datetime import date
+from itertools import product
 from pathlib import Path
 from typing import Callable, Literal, Protocol
 from urllib.parse import urlparse
@@ -20,6 +21,34 @@ from qotd.external.web_search.core import WebSearchClient, WebSearchResult
 
 
 DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"
+DEFAULT_EVALUATION_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "evaluate_generated_question.md"
+DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "discover_question_topics.md"
+QUESTION_SUBJECT_LENSES = (
+    "people, personalities, and celebrity",
+    "everyday life, habits, and social customs",
+    "traditions, celebrations, and rituals",
+    "pop culture, entertainment, and media appearances",
+    "fans, communities, and subcultures",
+    "language, slang, nicknames, and catchphrases",
+    "fashion, design, symbols, and visual identity",
+    "food, drink, and leisure",
+    "places, local identity, and regional differences",
+    "objects, tools, and technology",
+    "making things and behind-the-scenes processes",
+    "money, brands, advertising, and trade",
+)
+QUESTION_STORY_ANGLES = (
+    "a surprising origin or evolution",
+    "accidents and unintended consequences",
+    "rivalries and conflicts",
+    "myths, misconceptions, and false memories",
+    "an unusual exception or quirky rule",
+    "overlooked contributors",
+    "adaptation, reinvention, or a comeback",
+    "a crossover between different cultures or fields",
+    "a rise, decline, or unexpected revival",
+    "an oddly specific anecdote with a memorable payoff",
+)
 _VOLATILE_TERMS = re.compile(r"\b(today|currently|current|latest|live|price|ranking|standings?)\b", re.IGNORECASE)
 
 
@@ -30,6 +59,7 @@ class QuestionTopic:
     title: str
     summary: str
     source_url: str
+    lenses: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +94,15 @@ class QuestionOptionsOutput(BaseModel):
     D: str
 
 
+class GeneratedSourceOutput(BaseModel):
+    """One source and the evidence it contributes to a generated question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    evidence: str
+
+
 class GeneratedQuestionOutput(BaseModel):
     """Structured generated-question output returned by an LLM."""
 
@@ -73,8 +112,34 @@ class GeneratedQuestionOutput(BaseModel):
     options: QuestionOptionsOutput
     correct_option: Literal["A", "B", "C", "D"]
     source_note: str
-    source_urls: list[str]
+    sources: list[GeneratedSourceOutput]
     topic: str
+
+
+class QuestionQualityReviewOutput(BaseModel):
+    """Structured quality review returned by an LLM evaluator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approved: bool
+    rejection_reasons: list[str]
+
+
+class DiscoveredTopicOutput(BaseModel):
+    """One volatile creative direction proposed for question research."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    summary: str
+
+
+class TopicDiscoveryOutput(BaseModel):
+    """Structured collection of proposed question topics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    topics: list[DiscoveredTopicOutput]
 
 
 class QuestionGenerator(Protocol):
@@ -92,13 +157,21 @@ class QuestionGenerator(Protocol):
         """Return one structured candidate."""
 
 
+class QuestionEvaluator(Protocol):
+    """Evaluate whether a generated question is fair and does not leak its answer."""
+
+    def __call__(self, candidate: GeneratedQuestionCandidate, /) -> tuple[str, ...]:
+        """Return actionable rejection reasons, or an empty tuple when approved."""
+
+
 @dataclass(frozen=True)
 class LLMQuestionGenerator:
     """Generate structured QOTD candidates with an injected LLM client."""
 
     llm_client: LLMClient
     prompt_path: Path = DEFAULT_PROMPT_PATH
-    max_output_tokens: int = 1200
+    max_output_tokens: int = 24000
+    use_web_search: bool = False
 
     def __call__(
         self,
@@ -116,6 +189,7 @@ class LLMQuestionGenerator:
             payload={
                 "category": category,
                 "topic": {"title": topic.title, "summary": topic.summary},
+                "lenses": list(topic.lenses),
                 "evidence": [
                     {"title": result.title, "url": result.url, "snippet": result.snippet}
                     for result in evidence
@@ -125,8 +199,13 @@ class LLMQuestionGenerator:
             response_model=GeneratedQuestionOutput,
             schema_name="qotd_generated_question",
             max_output_tokens=self.max_output_tokens,
+            tools=({"type": "web_search"},) if self.use_web_search else (),
         )
         evidence_by_url = {result.url: result.snippet for result in evidence}
+        source_urls = tuple(source.url for source in data.sources)
+        source_evidence = tuple(
+            evidence_by_url.get(source.url, source.evidence) for source in data.sources
+        )
         return GeneratedQuestionCandidate(
             question=Question(
                 game_date=game_date.isoformat(),
@@ -134,13 +213,80 @@ class LLMQuestionGenerator:
                 options=data.options.model_dump(),
                 correct_option=data.correct_option,
                 source_note=data.source_note,
-                source_url=data.source_urls[0] if data.source_urls else "",
+                source_url=source_urls[0] if source_urls else "",
             ),
             topic_source=topic,
             category=category,
             topic=data.topic,
-            source_urls=tuple(data.source_urls),
-            source_evidence=tuple(evidence_by_url.get(url, "") for url in data.source_urls),
+            source_urls=source_urls,
+            source_evidence=source_evidence,
+        )
+
+
+@dataclass(frozen=True)
+class LLMQuestionEvaluator:
+    """Use an LLM to reject answer leakage and semantically unfair questions."""
+
+    llm_client: LLMClient
+    prompt_path: Path = DEFAULT_EVALUATION_PROMPT_PATH
+    max_output_tokens: int = 4000
+
+    def __call__(self, candidate: GeneratedQuestionCandidate, /) -> tuple[str, ...]:
+        """Return concise, actionable reasons when a candidate should be regenerated."""
+
+        question = candidate.question
+        data = self.llm_client.create_structured_response(
+            prompt_path=self.prompt_path,
+            payload={
+                "category": candidate.category,
+                "topic": candidate.topic_source.title,
+                "question": {
+                    "prompt": question.prompt,
+                    "options": question.options,
+                    "correct_option": question.correct_option,
+                    "correct_answer": question.options[question.correct_option],
+                },
+                "source_note": question.source_note,
+                "source_evidence": list(candidate.source_evidence),
+            },
+            response_model=QuestionQualityReviewOutput,
+            schema_name="qotd_question_quality_review",
+            max_output_tokens=self.max_output_tokens,
+        )
+        reasons = tuple(reason.strip() for reason in data.rejection_reasons if reason.strip())
+        if data.approved:
+            return ()
+        return reasons or ("LLM evaluator rejected the question without a specific reason",)
+
+
+@dataclass(frozen=True)
+class LLMTopicDiscoverer:
+    """Use web search and an editorial prompt to propose concrete topic entities."""
+
+    llm_client: LLMClient
+    prompt_path: Path = DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH
+    max_output_tokens: int = 12000
+
+    def search(self, query: str, *, limit: int = 5) -> tuple[WebSearchResult, ...]:
+        """Return prompt-planned topic entities through the web-search boundary."""
+
+        if limit < 1:
+            raise ValueError("topic discovery limit must be at least 1")
+        data = self.llm_client.create_structured_response(
+            prompt_path=self.prompt_path,
+            payload={"brief": query, "limit": limit},
+            response_model=TopicDiscoveryOutput,
+            schema_name="qotd_topic_discovery",
+            max_output_tokens=self.max_output_tokens,
+            tools=({"type": "web_search"},),
+        )
+        return tuple(
+            WebSearchResult(
+                title=topic.title,
+                url="",
+                snippet=topic.summary,
+            )
+            for topic in data.topics[:limit]
         )
 
 
@@ -162,8 +308,10 @@ class GenerateQuestionSamplesConfig:
     topic: str
     sample_count: int
     game_date: date
-    category: str = "General Knowledge"
-    search_result_limit: int = 5
+    category: str | None = None
+    seed: str | int | None = None
+    categories: tuple[str, ...] = QUESTION_CATEGORIES
+    attempts: int = 3
 
 
 FailureAlert = Callable[[str], None]
@@ -172,8 +320,8 @@ FailureAlert = Callable[[str], None]
 def generate_question_samples(
     config: GenerateQuestionSamplesConfig,
     *,
-    search_client: WebSearchClient,
     generate_question: QuestionGenerator,
+    evaluate_question: QuestionEvaluator | None = None,
 ) -> tuple[GeneratedQuestionCandidate, ...]:
     """Generate reviewable candidates without sending or persisting them."""
 
@@ -182,37 +330,75 @@ def generate_question_samples(
         raise ValueError("topic cannot be blank")
     if config.sample_count < 1:
         raise ValueError("sample count must be at least 1")
-    if config.search_result_limit < 1:
-        raise ValueError("search result limit must be at least 1")
-
-    evidence = tuple(
-        result
-        for result in search_client.search(
-            f"{topic_text} trivia facts primary authoritative sources",
-            limit=config.search_result_limit,
-        )
-        if _valid_search_result(result)
-    )
-    if not evidence:
-        raise RuntimeError(f"No usable source evidence found for topic: {topic_text}")
-
-    topic = QuestionTopic(
-        title=topic_text,
-        summary="Research evidence supplied for developer question sampling.",
-        source_url=evidence[0].url,
+    if config.attempts < 1:
+        raise ValueError("attempts must be at least 1")
+    lens_pairs = choose_lens_pairs(config.sample_count, seed=config.seed)
+    categories = (
+        (config.category,) * config.sample_count
+        if config.category is not None
+        else choose_categories(config.sample_count, config.categories, seed=config.seed)
     )
     candidates = []
-    for _ in range(config.sample_count):
-        candidates.append(
-            generate_question(
-                topic,
-                config.category,
-                config.game_date,
-                evidence,
-                (),
-            )
+    for lenses, category in zip(lens_pairs, categories, strict=True):
+        topic = QuestionTopic(
+            title=topic_text,
+            summary="Research this topic with web search before writing the question.",
+            source_url="",
+            lenses=lenses,
         )
+        rejection_reasons: list[str] = []
+        for attempt in range(1, config.attempts + 1):
+            try:
+                candidate = generate_question(
+                    topic,
+                    category,
+                    config.game_date,
+                    (),
+                    tuple(rejection_reasons),
+                )
+                validate_question(candidate.question)
+                evaluation_reasons = evaluate_question(candidate) if evaluate_question is not None else ()
+                if evaluation_reasons:
+                    raise ValueError("; ".join(evaluation_reasons))
+            except ValueError as exc:
+                rejection_reasons.append(f"attempt {attempt}: {exc}")
+                continue
+            candidates.append(candidate)
+            break
+        else:
+            raise RuntimeError(
+                f"Could not generate a valid sample for lenses {lenses}: " + "; ".join(rejection_reasons)
+            )
     return tuple(candidates)
+
+
+def choose_lens_pairs(count: int, *, seed: str | int | None = None) -> tuple[tuple[str, str], ...]:
+    """Choose distinct creative-lens pairs for a batch of candidates."""
+
+    if count < 1:
+        raise ValueError("lens pair count must be at least 1")
+    pairs = list(product(QUESTION_SUBJECT_LENSES, QUESTION_STORY_ANGLES))
+    rng = random.Random(seed)
+    rng.shuffle(pairs)
+    return tuple(pairs[index % len(pairs)] for index in range(count))
+
+
+def choose_categories(
+    count: int,
+    categories: tuple[str, ...] = QUESTION_CATEGORIES,
+    *,
+    seed: str | int | None = None,
+) -> tuple[str, ...]:
+    """Choose shuffled categories, avoiding repeats until the set is exhausted."""
+
+    if count < 1:
+        raise ValueError("category count must be at least 1")
+    cleaned = tuple(category.strip() for category in categories if category.strip())
+    if not cleaned:
+        raise ValueError("at least one category is required")
+    shuffled = list(cleaned)
+    random.Random(seed).shuffle(shuffled)
+    return tuple(shuffled[index % len(shuffled)] for index in range(count))
 
 
 def choose_category(categories: tuple[str, ...], *, seed: str | int | None = None) -> str:
@@ -239,20 +425,67 @@ def _authority_score(result: WebSearchResult) -> int:
     return int(host.endswith(".gov")) * 3 + int(host.endswith(".edu")) * 2 + int(host.endswith(".org"))
 
 
+def _valid_topic_direction(result: WebSearchResult) -> bool:
+    """Return whether discovery produced a usable title and creative direction."""
+
+    return bool(result.title.strip() and result.snippet.strip())
+
+
 def discover_topics(
     search_client: WebSearchClient,
     category: str,
     *,
     limit: int,
+    lenses: tuple[str, str] | None = None,
+    as_of_date: date | None = None,
 ) -> tuple[WebSearchResult, ...]:
-    """Find viable topic evidence, preferring authoritative results."""
+    """Find viable topic directions, preferring authoritative evidence when present."""
 
+    lens_guidance = ""
+    if lenses is not None:
+        lens_guidance = f" subject lens: {lenses[0]}; story angle: {lenses[1]};"
+    date_guidance = f" as of date: {as_of_date.isoformat()};" if as_of_date is not None else ""
     results = search_client.search(
-        f"{category} trivia facts primary authoritative sources",
+        f"{category} trivia facts;{date_guidance}{lens_guidance} surprising approachable topics; "
+        "timely creative directions",
         limit=limit,
     )
-    viable = [result for result in results if _valid_search_result(result) and not _VOLATILE_TERMS.search(result.title)]
+    viable = [result for result in results if _valid_topic_direction(result)]
     return tuple(sorted(viable, key=_authority_score, reverse=True))
+
+
+def validate_self_researched_candidate(candidate: GeneratedQuestionCandidate) -> None:
+    """Validate a candidate whose generator performed its own web research."""
+
+    validate_question(candidate.question)
+    if not candidate.topic.strip():
+        raise ValueError("topic cannot be blank")
+    if _VOLATILE_TERMS.search(candidate.question.prompt):
+        raise ValueError("question relies on a volatile claim")
+    if not candidate.source_urls or len(candidate.source_urls) != len(set(candidate.source_urls)):
+        raise ValueError("question must cite one or more distinct source URLs")
+    if len(candidate.source_urls) != len(candidate.source_evidence):
+        raise ValueError("each source URL must have supporting evidence")
+    if any(not _valid_search_result(WebSearchResult("source", url, evidence)) for url, evidence in zip(
+        candidate.source_urls,
+        candidate.source_evidence,
+        strict=True,
+    )):
+        raise ValueError("generated source evidence must include valid URLs and nonblank excerpts")
+
+    cited_text = " ".join(candidate.source_evidence).casefold()
+    correct_text = candidate.question.options[candidate.question.correct_option].strip().casefold()
+    supported_options = {
+        label
+        for label, option in candidate.question.options.items()
+        if option.strip().casefold() in cited_text
+    }
+    if candidate.question.correct_option not in supported_options:
+        raise ValueError("generated source evidence does not support the correct answer")
+    if len(supported_options) != 1:
+        raise ValueError("generated source evidence supports multiple plausible answers")
+    if correct_text in candidate.question.prompt.casefold():
+        raise ValueError("question prompt leaks the correct answer")
 
 
 def validate_researched_candidate(
@@ -295,6 +528,7 @@ def generate_researched_question(
     *,
     search_client: WebSearchClient,
     generate_question: QuestionGenerator,
+    evaluate_question: QuestionEvaluator | None = None,
     alert_organizer: FailureAlert | None = None,
 ) -> ResearchedQuestionResult:
     """Choose, research, generate, and verify a question or fail closed."""
@@ -307,23 +541,42 @@ def generate_researched_question(
     seed = config.seed if config.seed is not None else config.game_date.isoformat()
     rng = random.Random(seed)
     category = choose_category(config.categories, seed=seed)
+    lenses = choose_lens_pairs(1, seed=seed)[0]
     rejection_reasons: list[str] = []
     for attempt in range(1, config.attempts + 1):
-        evidence = discover_topics(search_client, category, limit=config.search_result_limit)
+        evidence = discover_topics(
+            search_client,
+            category,
+            limit=config.search_result_limit,
+            lenses=lenses,
+            as_of_date=config.game_date,
+        )
         if not evidence:
             rejection_reasons.append(f"attempt {attempt}: search returned no viable evidence")
             continue
         topic_result = rng.choice(evidence)
-        topic = QuestionTopic(topic_result.title, topic_result.snippet, topic_result.url)
+        topic = QuestionTopic(
+            topic_result.title,
+            topic_result.snippet,
+            topic_result.url,
+            lenses=lenses,
+        )
+        research_evidence = tuple(item for item in evidence if _valid_search_result(item))
         try:
             candidate = generate_question(
                 topic,
                 category,
                 config.game_date,
-                evidence,
+                research_evidence,
                 tuple(rejection_reasons),
             )
-            validate_researched_candidate(candidate, evidence)
+            if research_evidence:
+                validate_researched_candidate(candidate, research_evidence)
+            else:
+                validate_self_researched_candidate(candidate)
+            evaluation_reasons = evaluate_question(candidate) if evaluate_question is not None else ()
+            if evaluation_reasons:
+                raise ValueError("; ".join(evaluation_reasons))
         except ValueError as exc:
             rejection_reasons.append(f"attempt {attempt}: {exc}")
             continue

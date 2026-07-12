@@ -23,6 +23,7 @@ class FakeLLMClient:
         response_model: type[Any],
         schema_name: str,
         max_output_tokens: int,
+        tools: tuple[dict[str, Any], ...] = (),
     ) -> Any:
         self.calls.append(
             {

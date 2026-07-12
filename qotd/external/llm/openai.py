@@ -28,15 +28,16 @@ class OpenAILLMClient:
         response_model: type[TResponse],
         schema_name: str,
         max_output_tokens: int,
+        tools: tuple[dict[str, Any], ...] = (),
     ) -> TResponse:
         """Call OpenAI and parse the response into a Pydantic model."""
 
-        response = self.client.responses.create(
-            model=self.model,
-            instructions=render_prompt(prompt_path, payload),
-            input="Return the requested structured result.",
-            max_output_tokens=max_output_tokens,
-            text={
+        request: dict[str, Any] = {
+            "model": self.model,
+            "instructions": render_prompt(prompt_path, payload),
+            "input": "Return the requested structured result.",
+            "max_output_tokens": max_output_tokens,
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
@@ -44,6 +45,11 @@ class OpenAILLMClient:
                     "strict": True,
                 }
             },
+        }
+        if tools:
+            request["tools"] = list(tools)
+        response = self.client.responses.create(
+            **request,
         )
         return response_model.model_validate(_parse_response_json(response))
 

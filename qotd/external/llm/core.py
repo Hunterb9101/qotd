@@ -22,5 +22,6 @@ class LLMClient(Protocol):
         response_model: type[TResponse],
         schema_name: str,
         max_output_tokens: int,
+        tools: tuple[dict[str, Any], ...] = (),
     ) -> TResponse:
         """Return validated structured output from an LLM provider."""

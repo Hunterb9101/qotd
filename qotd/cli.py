@@ -10,7 +10,6 @@ from datetime import date
 
 from qotd.domain.dates import current_game_date
 from qotd.external.llm.openai import build_openai_llm_client
-from qotd.external.web_search.openai import build_openai_web_search_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.usecases.correct_answer import ProcessCorrectAnswerEmailsConfig, process_correct_answer_emails
 from qotd.usecases.adjust_score import (
@@ -24,7 +23,9 @@ from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.usecases.generate_question_for_topic import (
     GenerateQuestionSamplesConfig,
     GenerateResearchedQuestionConfig,
+    LLMQuestionEvaluator,
     LLMQuestionGenerator,
+    LLMTopicDiscoverer,
     generate_question_samples,
     generate_researched_question,
 )
@@ -33,8 +34,8 @@ from qotd.usecases.generate_question_for_topic import (
 DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"
 DEFAULT_BIGQUERY_DATASET = "qotd"
 DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-4.1-mini"
-DEFAULT_OPENAI_GENERATOR_MODEL = "gpt-4.1-mini"
-DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_GENERATOR_MODEL = "gpt-5.4-mini"
+DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5.4-mini"
 
 
 def parse_date(value: str) -> date:
@@ -135,11 +136,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--openai-generator-model",
         default=os.environ.get("OPENAI_GENERATOR_MODEL", DEFAULT_OPENAI_GENERATOR_MODEL),
     )
-    samples_parser.add_argument(
-        "--openai-web-search-model",
-        default=os.environ.get("OPENAI_WEB_SEARCH_MODEL", DEFAULT_OPENAI_WEB_SEARCH_MODEL),
-    )
-
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
     score_parser.add_argument("--game-date", type=parse_date, default=None)
@@ -210,20 +206,23 @@ def main() -> None:
             oauth_refresh_token=args.oauth_refresh_token,
         )
         def generate_question(game_date: date, _state_store: object):
-            llm_generator = LLMQuestionGenerator(
-                llm_client=build_openai_llm_client(
-                    api_key=args.openai_api_key,
-                    model=args.openai_generator_model,
-                )
+            llm_client = build_openai_llm_client(
+                api_key=args.openai_api_key,
+                model=args.openai_generator_model,
             )
-            search_client = build_openai_web_search_client(
+            llm_generator = LLMQuestionGenerator(
+                llm_client=llm_client,
+                use_web_search=True,
+            )
+            topic_discovery_client = build_openai_llm_client(
                 api_key=args.openai_api_key,
                 model=args.openai_web_search_model,
             )
             return generate_researched_question(
                 GenerateResearchedQuestionConfig(game_date=game_date),
-                search_client=search_client,
+                search_client=LLMTopicDiscoverer(llm_client=topic_discovery_client),
                 generate_question=llm_generator,
+                evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
             ).candidate.question
 
         send_result = send_question(
@@ -252,6 +251,10 @@ def main() -> None:
     elif args.command == "generate-samples":
         if not args.openai_api_key:
             parser.error("generate-samples requires OPENAI_API_KEY or --openai-api-key")
+        llm_client = build_openai_llm_client(
+            api_key=args.openai_api_key,
+            model=args.openai_generator_model,
+        )
         candidates = generate_question_samples(
             GenerateQuestionSamplesConfig(
                 topic=args.topic,
@@ -259,16 +262,11 @@ def main() -> None:
                 game_date=args.date,
                 category=args.category,
             ),
-            search_client=build_openai_web_search_client(
-                api_key=args.openai_api_key,
-                model=args.openai_web_search_model,
-            ),
             generate_question=LLMQuestionGenerator(
-                llm_client=build_openai_llm_client(
-                    api_key=args.openai_api_key,
-                    model=args.openai_generator_model,
-                )
+                llm_client=llm_client,
+                use_web_search=True,
             ),
+            evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
         )
         print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))
 

@@ -67,9 +67,27 @@ class OpenAILLMClientTests(unittest.TestCase):
         call = client.responses.calls[0]
         self.assertEqual(call["instructions"], "Return JSON.")
         self.assertEqual(call["input"], "Return the requested structured result.")
+        self.assertNotIn("tools", call)
         text_config = cast(dict[str, Any], call["text"])
         self.assertEqual(text_config["format"]["name"], "example_output")
         self.assertIn("option", text_config["format"]["schema"]["properties"])
+
+    def test_create_structured_response_can_enable_web_search(self) -> None:
+        client = FakeOpenAIClient({"option": "A"})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "prompt.md"
+            prompt_path.write_text("Research and return JSON.", encoding="utf-8")
+
+            OpenAILLMClient(client=client, model="test-model").create_structured_response(
+                prompt_path=prompt_path,
+                payload={},
+                response_model=ExampleOutput,
+                schema_name="example_output",
+                max_output_tokens=50,
+                tools=({"type": "web_search"},),
+            )
+
+        self.assertEqual(client.responses.calls[0]["tools"], [{"type": "web_search"}])
 
     def test_create_structured_response_rejects_invalid_model_output(self) -> None:
         client = FakeOpenAIClient({"option": "C"})
