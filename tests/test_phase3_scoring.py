@@ -241,14 +241,14 @@ class Phase3ScoringTests(unittest.TestCase):
 
     def test_organizer_email_wraps_scoring_update_body(self) -> None:
         message = build_organizer_email(
-            sender="***SECRET***",
+            sender="sender@example.com",
             organizer="organizer@example.com",
             subject="QOTD scoring update",
             body="Current standings:\n- player@example.com: 1",
         )
 
         self.assertEqual(message["To"], "organizer@example.com")
-        self.assertEqual(message["From"], "***SECRET***")
+        self.assertEqual(message["From"], "sender@example.com")
         self.assertIn("Current standings", message.get_content())
 
 

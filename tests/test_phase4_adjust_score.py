@@ -204,8 +204,8 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
 
         result = process_score_adjustment_emails(
             ProcessScoreAdjustmentEmailsConfig(
-                sender="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                gmail_user="sender@example.com",
                 organizer_emails=("organizer@example.com",),
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
@@ -254,8 +254,8 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
 
         result = process_score_adjustment_emails(
             ProcessScoreAdjustmentEmailsConfig(
-                sender="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                gmail_user="sender@example.com",
                 organizer_emails=("organizer@example.com",),
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",

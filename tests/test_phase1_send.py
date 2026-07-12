@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from qotd.cli import build_parser, require_sender_options
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
@@ -25,6 +26,19 @@ from tests.support import InMemoryStateStore
 
 
 class Phase1SendTests(unittest.TestCase):
+    def test_sender_setting_supplies_all_email_identities(self) -> None:
+        with patch.dict("os.environ", {"QOTD_SENDER": "sender@example.com"}, clear=True):
+            parser = build_parser()
+
+        for command in ("send-question", "score-responses", "process-score-adjustments"):
+            args = parser.parse_args([command])
+            require_sender_options(args)
+
+            self.assertEqual(args.sender, "sender@example.com")
+            self.assertEqual(args.gmail_user, "sender@example.com")
+            if command == "score-responses":
+                self.assertEqual(args.organizer, "sender@example.com")
+
     def test_question_subject_is_shared_by_participant_email(self) -> None:
         question = generate_placeholder_question("2026-07-09")
 
@@ -49,7 +63,7 @@ class Phase1SendTests(unittest.TestCase):
         self.assertIsNone(
             detect_cody_sent_question(
                 messages,
-                sender="***SECRET***",
+                sender="sender@example.com",
                 game_date=date(2026, 7, 9),
             )
         )
@@ -59,10 +73,10 @@ class Phase1SendTests(unittest.TestCase):
         message = self._parsed_message("manual-1", "QOTD - 2026-07-09")
         config = SendQuestionConfig(
             game_date=date(2026, 7, 9),
-            sender="***SECRET***",
+            sender="sender@example.com",
             contact_group_name="QOTD Participants",
             state_store=store,
-            gmail_user="***SECRET***",
+            gmail_user="sender@example.com",
             oauth_client_id="",
             oauth_client_secret="",
             oauth_refresh_token="",
@@ -87,7 +101,7 @@ class Phase1SendTests(unittest.TestCase):
         return ParsedEmailMessage(
             message_id=message_id,
             thread_id="thread-1",
-            sender_email="***SECRET***",
+            sender_email="sender@example.com",
             subject=subject,
             sent_at=datetime(2026, 7, 9, 18, 0, tzinfo=UTC),
             body_text="Manual question body",
@@ -105,12 +119,12 @@ class Phase1SendTests(unittest.TestCase):
         question = generate_placeholder_question("2026-07-09")
         message = build_participant_email(
             question,
-            "***SECRET***",
+            "sender@example.com",
             ["one@example.com", "two@example.com"],
         )
         body = message.get_content()
 
-        self.assertEqual(message["To"], "***SECRET***")
+        self.assertEqual(message["To"], "sender@example.com")
         self.assertEqual(message["Bcc"], "one@example.com, two@example.com")
         self.assertIn(question.prompt, body)
         self.assertIn("A. Mars", body)
@@ -173,10 +187,10 @@ class Phase1SendTests(unittest.TestCase):
         result = send_question(
             SendQuestionConfig(
                 game_date=date(2026, 7, 13),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 contact_group_name="QOTD Participants",
                 state_store=store,
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
@@ -225,10 +239,10 @@ class Phase1SendTests(unittest.TestCase):
         result = send_question(
             SendQuestionConfig(
                 game_date=date(2026, 7, 10),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 contact_group_name="QOTD Participants",
                 state_store=store,
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
@@ -260,10 +274,10 @@ class Phase1SendTests(unittest.TestCase):
         result = send_question(
             SendQuestionConfig(
                 game_date=date(2026, 7, 10),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 contact_group_name="QOTD Participants",
                 state_store=store,
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
@@ -336,10 +350,10 @@ class Phase1SendTests(unittest.TestCase):
         result = send_question(
             SendQuestionConfig(
                 game_date=date(2026, 7, 9),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 contact_group_name="QOTD Participants",
                 state_store=store,
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",

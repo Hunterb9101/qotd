@@ -99,6 +99,17 @@ def require_google_options(args: argparse.Namespace) -> None:
         args.bigquery_dataset = env_value("BIGQUERY_DATASET", DEFAULT_BIGQUERY_DATASET)
 
 
+def require_sender_options(args: argparse.Namespace) -> None:
+    """Populate email identity options from the required sender setting."""
+
+    sender = args.sender or env_value("QOTD_SENDER")
+    args.sender = sender
+    if hasattr(args, "gmail_user") and not args.gmail_user:
+        args.gmail_user = sender
+    if hasattr(args, "organizer") and isinstance(args.organizer, str) and not args.organizer:
+        args.organizer = sender
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the QOTD command parser."""
 
@@ -109,8 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
     send_parser.add_argument("--date", type=parse_date, default=current_game_date())
     send_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
     send_parser.add_argument("--dry-run-recipient", action="append", default=[])
-    send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
-    send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     send_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
     send_parser.add_argument(
         "--openai-generator-model",
@@ -140,9 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
     score_parser.add_argument("--game-date", type=parse_date, default=None)
     score_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
-    score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
-    score_parser.add_argument("--organizer", default=os.environ.get("QOTD_ORGANIZER", os.environ.get("QOTD_SENDER", "***SECRET***")))
-    score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    score_parser.add_argument("--organizer", default=os.environ.get("QOTD_SENDER", ""))
+    score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     score_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
     score_parser.add_argument(
         "--openai-interpreter-model",
@@ -168,8 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
         "process-score-adjustments",
         help="Process score adjustment request emails",
     )
-    email_adjust_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
-    email_adjust_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    email_adjust_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    email_adjust_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     email_adjust_parser.add_argument("--organizer", action="append", default=[])
     email_adjust_parser.add_argument("--query", default='is:unread "Action: adjust-score"')
     email_adjust_parser.add_argument("--max-results", type=int, default=25)
@@ -180,8 +191,8 @@ def build_parser() -> argparse.ArgumentParser:
         "process-correct-answers",
         help="Process manual correct-answer emails",
     )
-    correct_answer_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", "***SECRET***"))
-    correct_answer_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_GMAIL_USER", os.environ.get("QOTD_SENDER", "***SECRET***")))
+    correct_answer_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    correct_answer_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     correct_answer_parser.add_argument("--organizer", action="append", default=[])
     correct_answer_parser.add_argument("--query", default='is:unread "Action: set-correct-answer"')
     correct_answer_parser.add_argument("--max-results", type=int, default=25)
@@ -197,6 +208,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "send-question":
+        require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
             project_id=args.google_cloud_project,
@@ -271,6 +283,7 @@ def main() -> None:
         print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))
 
     elif args.command == "score-responses":
+        require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
             project_id=args.google_cloud_project,
@@ -345,6 +358,7 @@ def main() -> None:
         )
 
     elif args.command == "process-score-adjustments":
+        require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
             project_id=args.google_cloud_project,
@@ -353,11 +367,7 @@ def main() -> None:
             oauth_client_secret=args.oauth_client_secret,
             oauth_refresh_token=args.oauth_refresh_token,
         )
-        organizers = tuple(args.organizer) or (
-            os.environ.get("QOTD_ORGANIZER")
-            or os.environ.get("QOTD_SENDER")
-            or "***SECRET***",
-        )
+        organizers = tuple(args.organizer) or (args.sender,)
 
         processing_result = process_score_adjustment_emails(
             ProcessScoreAdjustmentEmailsConfig(
@@ -381,6 +391,7 @@ def main() -> None:
             print(f"- {adjustment_item.message_id}: {adjustment_item.status} ({adjustment_item.response_message_id})")
 
     elif args.command == "process-correct-answers":
+        require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
             project_id=args.google_cloud_project,
@@ -389,11 +400,7 @@ def main() -> None:
             oauth_client_secret=args.oauth_client_secret,
             oauth_refresh_token=args.oauth_refresh_token,
         )
-        organizers = tuple(args.organizer) or (
-            os.environ.get("QOTD_ORGANIZER")
-            or os.environ.get("QOTD_SENDER")
-            or "***SECRET***",
-        )
+        organizers = tuple(args.organizer) or (args.sender,)
         correct_answer_result = process_correct_answer_emails(
             ProcessCorrectAnswerEmailsConfig(
                 sender=args.sender,

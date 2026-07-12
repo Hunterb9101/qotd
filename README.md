@@ -45,7 +45,7 @@ Given the small-scale operations and the ephemeral nature of Github Actions, I o
 
 ### Github Actions
 
-This repository relies heavily on the workflows defined in `.github/workflows`. You'll need to create a `production` environment, and populate with 4 environment secrets and one environment variable. 3 variables (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`) will be determined by `scripts/generate_oauth_refresh_token.py`. Sign in with your QOTD organizer email. We will also need an `OPENAI_API_KEY` from the OpenAI platform. In addition, you'll need to get the `GOOGLE_CLOUD_PROJECT` to point the action at the necessary GCP project.
+This repository relies heavily on the workflows defined in `.github/workflows`. Create a `production` environment and add the `QOTD_SENDER`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `OPENAI_API_KEY` environment secrets. The three Google OAuth values are determined by `scripts/generate_oauth_refresh_token.py`; sign in with the same organizer email stored in `QOTD_SENDER`. Set `GOOGLE_CLOUD_PROJECT` to the necessary GCP project.
 
 ##  For Developers
 ### Local Installation
@@ -63,6 +63,7 @@ Production commands use Gmail and BigQuery. Provide these values with environmen
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
 export GOOGLE_OAUTH_REFRESH_TOKEN="..."
+export QOTD_SENDER="organizer@example.com"
 export GOOGLE_CLOUD_PROJECT="..."
 export BIGQUERY_DATASET="qotd"
 export OPENAI_API_KEY="..."

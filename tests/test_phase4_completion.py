@@ -46,9 +46,9 @@ class Phase4CompletionTests(unittest.TestCase):
         result = send_question(
             SendQuestionConfig(
                 game_date=date(2026, 7, 9),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 contact_group_name="QOTD Participants",
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
@@ -59,13 +59,13 @@ class Phase4CompletionTests(unittest.TestCase):
                 ParsedEmailMessage(
                     message_id="manual-1",
                     thread_id="thread-1",
-                    sender_email="***SECRET***",
+                    sender_email="sender@example.com",
                     subject="QOTD - 2026-07-09",
                     sent_at=datetime(2026, 7, 9, 18, 0, tzinfo=UTC),
                     body_text="Manual question body",
                 )
             ]
-            if query == cody_sent_query(sender="***SECRET***", game_date=date(2026, 7, 9))
+            if query == cody_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9))
             else [],
         )
 
@@ -96,8 +96,8 @@ class Phase4CompletionTests(unittest.TestCase):
 
         result = process_correct_answer_emails(
             ProcessCorrectAnswerEmailsConfig(
-                sender="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                gmail_user="sender@example.com",
                 organizer_emails=("organizer@example.com",),
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
@@ -133,8 +133,8 @@ class Phase4CompletionTests(unittest.TestCase):
         store.append_question_record(stored_question(correct_option="B"))
         process_correct_answer_emails(
             ProcessCorrectAnswerEmailsConfig(
-                sender="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                gmail_user="sender@example.com",
                 organizer_emails=("organizer@example.com",),
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
@@ -173,9 +173,9 @@ class Phase4CompletionTests(unittest.TestCase):
         result = score_responses(
             ScoreResponsesConfig(
                 scoring_date=date(2026, 7, 10),
-                sender="***SECRET***",
+                sender="sender@example.com",
                 organizer="organizer@example.com",
-                gmail_user="***SECRET***",
+                gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",

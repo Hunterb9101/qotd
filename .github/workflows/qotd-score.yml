@@ -19,9 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      QOTD_SENDER: ***SECRET***
-      QOTD_GMAIL_USER: ***SECRET***
-      QOTD_ORGANIZER: ***SECRET***
+      QOTD_SENDER: ${{ secrets.QOTD_SENDER }}
       GOOGLE_CLOUD_PROJECT: question-of-the-day-501919
       BIGQUERY_DATASET: qotd
       GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}

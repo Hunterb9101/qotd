@@ -92,7 +92,7 @@ class ResponseWorkflowTests(unittest.TestCase):
         messages = [
             parsed_gmail_message(
                 message_id="sent-question",
-                sender="***SECRET***",
+                sender="sender@example.com",
                 body="Question",
                 sent_at=datetime.fromisoformat("2026-07-09T18:01:00+00:00"),
             ),
@@ -110,7 +110,7 @@ class ResponseWorkflowTests(unittest.TestCase):
             ),
         ]
 
-        replies = collect_reply_candidates(messages, question=stored_question(), sender="***SECRET***")
+        replies = collect_reply_candidates(messages, question=stored_question(), sender="sender@example.com")
 
         self.assertEqual(len(replies), 1)
         self.assertEqual(replies[0].gmail_message_id, "reply-1")
@@ -122,9 +122,9 @@ class ResponseWorkflowTests(unittest.TestCase):
         result = score_responses(
             ScoreResponsesConfig(
                 scoring_date=date(2026, 7, 10),
-                sender="***SECRET***",
-                organizer="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                organizer="sender@example.com",
+                gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
@@ -159,9 +159,9 @@ class ResponseWorkflowTests(unittest.TestCase):
             ScoreResponsesConfig(
                 scoring_date=None,
                 game_date=date(2026, 7, 9),
-                sender="***SECRET***",
-                organizer="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                organizer="sender@example.com",
+                gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
@@ -200,9 +200,9 @@ class ResponseWorkflowTests(unittest.TestCase):
         result = score_responses(
             ScoreResponsesConfig(
                 scoring_date=date(2026, 7, 10),
-                sender="***SECRET***",
-                organizer="***SECRET***",
-                gmail_user="***SECRET***",
+                sender="sender@example.com",
+                organizer="sender@example.com",
+                gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",

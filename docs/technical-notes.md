@@ -23,7 +23,7 @@ Prompts used at runtime must live inside the `qotd` package beside the use case 
 
 - Runtime: Python.
 - Scheduling: GitHub Actions.
-- Email: Gmail API using OAuth user consent for `***SECRET***` unless delegated service-account access is proven to work for the account.
+- Email: Gmail API using OAuth user consent for the account configured by `QOTD_SENDER`, unless delegated service-account access is proven to work for the account.
 - Participants: a named Google Contacts group accessed through the Google People API.
 - Persistent state: BigQuery.
 - Language model: OpenAI structured outputs behind the existing provider-neutral `LLMClient` interface.
