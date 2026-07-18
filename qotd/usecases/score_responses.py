@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -9,8 +10,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from qotd.domain.contacts import normalize_email_addresses
-from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day
+from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day, question_subject
 from qotd.domain.models import OPTION_LABELS, ReplyCandidate, StoredQuestion
 from qotd.domain.scoring import (
     AnswerInterpretation,
@@ -21,7 +21,6 @@ from qotd.domain.scoring import (
 )
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import GmailAdapter, search_messages, send_gmail_message
-from qotd.external.contacts.google import fetch_contact_group_email_addresses
 from qotd.external.llm.core import LLMClient
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_organizer_email
@@ -32,6 +31,7 @@ from qotd.usecases.question_history import load_question_for_game_date
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
 AnswerInterpreterFactory = Callable[[StoredQuestion], Callable[[str], AnswerInterpretation]]
 DEFAULT_INTERPRET_ANSWER_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "interpret_answer.md"
+REPLY_SUBJECT_PREFIX_RE = re.compile(r"^(?:(?:re|fw|fwd):\s*)+", re.IGNORECASE)
 
 
 class AnswerInterpretationOutput(BaseModel):
@@ -85,30 +85,9 @@ class ScoreResponsesConfig:
     oauth_client_secret: str
     oauth_refresh_token: str
     state_store: StorageClient
-    contact_group_name: str = ""
-    participant_emails: tuple[str, ...] = ()
     game_date: date | None = None
     answer_interpreter_factory: AnswerInterpreterFactory | None = None
     dry_run: bool = False
-
-
-def resolve_eligible_participants(config: ScoreResponsesConfig) -> list[str]:
-    """Resolve the canonical participant list from an override or Google Contacts."""
-
-    if config.participant_emails:
-        participants = normalize_email_addresses(config.participant_emails)
-    elif config.contact_group_name:
-        participants = fetch_contact_group_email_addresses(
-            oauth_client_id=config.oauth_client_id,
-            oauth_client_secret=config.oauth_client_secret,
-            oauth_refresh_token=config.oauth_refresh_token,
-            group_name=config.contact_group_name,
-        )
-    else:
-        raise RuntimeError("A Google Contacts group is required for scoring")
-    if not participants:
-        raise RuntimeError("No eligible QOTD participants found")
-    return participants
 
 
 @dataclass(frozen=True)
@@ -131,12 +110,19 @@ def today_mountain() -> date:
 
 
 def gmail_reply_query(*, game_date: date, scoring_date: date) -> str:
-    """Build a broad Gmail search query for QOTD replies."""
+    """Build a dated Gmail search query for QOTD replies."""
 
     # Gmail date search is day-granular; exact send/cutoff times are filtered in code.
     after = game_date.strftime("%Y/%m/%d")
     before = (scoring_date + timedelta(days=1)).strftime("%Y/%m/%d")
-    return f"subject:QOTD after:{after} before:{before}"
+    return f'subject:"{question_subject(game_date)}" after:{after} before:{before}'
+
+
+def is_question_reply_subject(subject: str, *, game_date: str) -> bool:
+    """Return whether a reply subject belongs to the dated QOTD question."""
+
+    normalized = REPLY_SUBJECT_PREFIX_RE.sub("", subject.strip())
+    return normalized == question_subject(game_date)
 
 
 def collect_reply_candidates(
@@ -151,6 +137,8 @@ def collect_reply_candidates(
     candidates: list[ReplyCandidate] = []
     for parsed in messages:
         if parsed.sender_email == sender.lower():
+            continue
+        if not is_question_reply_subject(parsed.subject, game_date=question.game_date):
             continue
         if parsed.sent_at is not None and parsed.sent_at.replace(tzinfo=parsed.sent_at.tzinfo or UTC) <= question_sent_at:
             continue
@@ -230,7 +218,6 @@ def score_responses(
                 query=gmail_query,
             )
 
-    participants = resolve_eligible_participants(config)
     replies = collect_reply_candidates(fetch_messages(query), question=question, sender=config.sender)
     interpret_answer = None
     if config.answer_interpreter_factory is not None:
@@ -251,7 +238,6 @@ def score_responses(
         existing_reply_processing_records=config.state_store.read_reply_processing_records(game_date=question.game_date),
         existing_monthly_score_records=config.state_store.read_monthly_scores(),
         interpret_answer=scoring_interpreter,
-        eligible_emails=participants,
     )
     for score_record in scoring.monthly_score_updates:
         config.state_store.append_monthly_score(score_record)

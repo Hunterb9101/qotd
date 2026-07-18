@@ -47,7 +47,6 @@ class Phase4CompletionTests(unittest.TestCase):
             SendQuestionConfig(
                 game_date=date(2026, 7, 9),
                 sender="sender@example.com",
-                contact_group_name="QOTD Participants",
                 gmail_user="sender@example.com",
                 oauth_client_id="client-id",
                 oauth_client_secret="client-secret",
@@ -60,7 +59,7 @@ class Phase4CompletionTests(unittest.TestCase):
                     message_id="manual-1",
                     thread_id="thread-1",
                     sender_email="sender@example.com",
-                    subject="QOTD - 2026-07-09",
+                    subject="QOTD - 07-09-26",
                     sent_at=datetime(2026, 7, 9, 18, 0, tzinfo=UTC),
                     body_text="Manual question body",
                 )

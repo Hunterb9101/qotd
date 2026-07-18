@@ -31,7 +31,6 @@ from qotd.usecases.generate_question_for_topic import (
 )
 
 
-DEFAULT_CONTACT_GROUP_NAME = "QOTD Participants"
 DEFAULT_BIGQUERY_DATASET = "qotd"
 DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-4.1-mini"
 DEFAULT_OPENAI_GENERATOR_MODEL = "gpt-5.4-mini"
@@ -118,8 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     send_parser = subparsers.add_parser("send-question", help="Generate and send today's QOTD email")
     send_parser.add_argument("--date", type=parse_date, default=current_game_date())
-    send_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
-    send_parser.add_argument("--dry-run-recipient", action="append", default=[])
+    send_parser.add_argument("--google-group-email", default=os.environ.get("QOTD_GOOGLE_GROUP_EMAIL", ""))
     send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
     send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     send_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
@@ -150,7 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
     score_parser.add_argument("--game-date", type=parse_date, default=None)
-    score_parser.add_argument("--contact-group-name", default=os.environ.get("QOTD_CONTACT_GROUP_NAME", DEFAULT_CONTACT_GROUP_NAME))
     score_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
     score_parser.add_argument("--organizer", default=os.environ.get("QOTD_SENDER", ""))
     score_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
@@ -241,13 +238,12 @@ def main() -> None:
             SendQuestionConfig(
                 game_date=args.date,
                 sender=args.sender,
-                contact_group_name=args.contact_group_name,
                 state_store=state_store,
                 gmail_user=args.gmail_user,
                 oauth_client_id=args.oauth_client_id,
                 oauth_client_secret=args.oauth_client_secret,
                 oauth_refresh_token=args.oauth_refresh_token,
-                participant_emails=tuple(args.dry_run_recipient),
+                google_group_email=args.google_group_email,
                 question_generator=generate_question,
                 dry_run=args.dry_run,
             )
@@ -304,7 +300,6 @@ def main() -> None:
                 oauth_client_secret=args.oauth_client_secret,
                 oauth_refresh_token=args.oauth_refresh_token,
                 state_store=state_store,
-                contact_group_name=args.contact_group_name,
                 answer_interpreter_factory=None
                 if args.disable_ai_answer_interpreter
                 else lambda question: LLMAnswerInterpreter(

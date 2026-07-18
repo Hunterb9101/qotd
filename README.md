@@ -13,7 +13,7 @@ Fast forward a decade, and I realized that we could use AI to automate much of t
 - Automated scoring cutoff at 6 AM PDT
 - Scheduled scoring summary sent to the organizer email at 7 AM PDT
 - Automated trivia question sent to participants at 2 PM PDT
-- Manage mailing list through Contacts group
+- Deliver questions through a private Google Group and derive monthly participation from positive scores
 
 ### Human-in-the-Loop Controls
 - Adjust any participant's score
@@ -23,7 +23,9 @@ Fast forward a decade, and I realized that we could use AI to automate much of t
 
 ### Email
 
-It's highly recommended to create a new Gmail account to manage the QOTD workflow. No other email providers are supported at this time.
+QOTD uses a Gmail account for sending, reply collection, and organizer controls. Automated participant questions are sent to a private, invitation-only Google Group rather than directly to a blind-copy recipient list. Configure the Group so only the organizer can post, replies go to the original author, conversations and membership are private, and the standard subscription footer is enabled.
+
+Google Group membership is the only participant list. QOTD scores replies correlated to the applicable question and includes only participants with positive points in current-month standings and non-respondent reporting.
 
 We will also be using the google account to access the Google Cloud Platform (GCP).
 
@@ -32,12 +34,11 @@ We'll need an API key to discover topics and generate questions.
 
 ### Google Cloud Platform
 
-We'll need to enable a number of API's for use, including the `Contacts API` and `Gmail API`. The following permissions will be needed via OAuth Access (A service account will only work if you have your own domain):
+We'll need to enable the Gmail and BigQuery APIs. The following permissions will be needed via OAuth Access (a service account will only work if you have your own domain):
 - `.../auth/bigquery` (Database access)
 - `.../auth/gmail.modify` (Add label to manually-sent QOTD emails)
 - `.../auth/gmail.readonly` (Score participant responses)
 - `.../auth/gmail.send` (Send QOTD)
-- `.../auth/contacts.readonly` (Mailing List)
 
 ### Database
 
@@ -45,7 +46,7 @@ Given the small-scale operations and the ephemeral nature of Github Actions, I o
 
 ### Github Actions
 
-This repository relies heavily on the workflows defined in `.github/workflows`. Create a `production` environment and add the `QOTD_SENDER`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `OPENAI_API_KEY` environment secrets. The three Google OAuth values are determined by `scripts/generate_oauth_refresh_token.py`; sign in with the same organizer email stored in `QOTD_SENDER`. Set `GOOGLE_CLOUD_PROJECT` to the necessary GCP project.
+This repository relies heavily on the workflows defined in `.github/workflows`. Create a `production` environment and add the `QOTD_SENDER`, `QOTD_GOOGLE_GROUP_EMAIL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, and `OPENAI_API_KEY` environment secrets. `QOTD_GOOGLE_GROUP_EMAIL` is the private Group's `@googlegroups.com` address. The three Google OAuth values are determined by `scripts/generate_oauth_refresh_token.py`; sign in with the same organizer email stored in `QOTD_SENDER`. Set `GOOGLE_CLOUD_PROJECT` to the necessary GCP project.
 
 ##  For Developers
 ### Local Installation
@@ -64,6 +65,7 @@ export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
 export GOOGLE_OAUTH_REFRESH_TOKEN="..."
 export QOTD_SENDER="organizer@example.com"
+export QOTD_GOOGLE_GROUP_EMAIL="your-private-group@googlegroups.com"
 export GOOGLE_CLOUD_PROJECT="..."
 export BIGQUERY_DATASET="qotd"
 export OPENAI_API_KEY="..."

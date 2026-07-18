@@ -135,9 +135,8 @@ class Phase3ScoringTests(unittest.TestCase):
         self.assertEqual(len(rerun.skipped_processing_keys), 3)
         self.assertEqual(len(store.read_reply_processing_records()), 3)
         score_rows = store.read_monthly_scores()
-        self.assertEqual(score_rows[-3]["points"], 1)
-        self.assertEqual(score_rows[-2]["points"], 0)
-        self.assertEqual(score_rows[-1]["points"], 0)
+        self.assertEqual(len(score_rows), 1)
+        self.assertEqual(score_rows[0]["points"], 1)
 
     def test_existing_score_totals_are_incremented(self) -> None:
         store = InMemoryStateStore()
@@ -181,7 +180,7 @@ class Phase3ScoringTests(unittest.TestCase):
 
         self.assertEqual(result.correct[0].email, "freeform@example.com")
 
-    def test_only_contact_group_members_are_scored_and_all_members_are_reported(self) -> None:
+    def test_correlated_replies_are_scored_without_a_separate_eligibility_list(self) -> None:
         result = score_replies(
             question=stored_question(),
             replies=[
@@ -202,19 +201,21 @@ class Phase3ScoringTests(unittest.TestCase):
             ],
             cutoff_at=datetime.fromisoformat("2026-07-10T07:00:00-06:00"),
             processed_at=datetime.fromisoformat("2026-07-10T14:00:00+00:00"),
-            eligible_emails=["MEMBER@example.com", "silent@example.com"],
         )
 
-        self.assertEqual([reply.email for reply in result.correct], ["member@example.com"])
-        self.assertEqual(result.no_response, ("silent@example.com",))
-        self.assertEqual(result.ineligible_senders, ("unknown@example.com",))
+        self.assertEqual(
+            [reply.email for reply in result.correct],
+            ["member@example.com", "unknown@example.com"],
+        )
+        self.assertEqual(result.no_response, ())
+        self.assertEqual(result.ineligible_senders, ())
         self.assertEqual(
             [(standing.email, standing.points) for standing in result.standings],
-            [("member@example.com", 1), ("silent@example.com", 0)],
+            [("member@example.com", 1), ("unknown@example.com", 1)],
         )
         body = build_organizer_update_body(stored_question(), result)
         self.assertNotIn("Ineligible senders", body)
-        self.assertNotIn("unknown@example.com", body)
+        self.assertIn("unknown@example.com", body)
 
     def test_organizer_update_body_contains_scoring_sections(self) -> None:
         result = score_replies(

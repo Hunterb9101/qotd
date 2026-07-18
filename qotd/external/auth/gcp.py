@@ -9,7 +9,6 @@ from typing import Any
 
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_OAUTH_SCOPES = (
-    "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.modify",

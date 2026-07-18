@@ -12,7 +12,6 @@ from qotd.domain.generator import generate_placeholder_question
 from qotd.domain.models import CorrectAnswerUpdate, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.auth.gcp import GOOGLE_TOKEN_URI, build_oauth_credentials
-from qotd.external.contacts.google import extract_email_addresses, find_contact_group
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.presentation.emails import build_participant_email
 from qotd.usecases.send_question import (
@@ -44,20 +43,20 @@ class Phase1SendTests(unittest.TestCase):
 
         message = build_participant_email(question, "sender@example.com", ["player@example.com"])
 
-        self.assertEqual(question_subject(date(2026, 7, 9)), "QOTD - 2026-07-09")
+        self.assertEqual(question_subject(date(2026, 7, 9)), "QOTD - 07-09-26")
         self.assertEqual(message["Subject"], question_subject(question.game_date))
 
     def test_manual_send_query_uses_exact_dated_subject(self) -> None:
         self.assertEqual(
             organizer_sent_query(sender="sender@example.com", game_date=date(2026, 7, 9)),
-            'in:sent from:sender@example.com subject:"QOTD - 2026-07-09"',
+            'in:sent from:sender@example.com subject:"QOTD - 07-09-26"',
         )
 
     def test_manual_send_detection_rejects_near_matches_and_wrong_dates(self) -> None:
         messages = [
-            self._parsed_message("near", "QOTD - 2026-07-09 extra"),
+            self._parsed_message("near", "QOTD - 07-09-26 extra"),
             self._parsed_message("scoring", "QOTD scoring update - 2026-07-09"),
-            self._parsed_message("wrong-date", "QOTD - 2026-07-08"),
+            self._parsed_message("wrong-date", "QOTD - 07-08-26"),
         ]
 
         self.assertIsNone(
@@ -70,11 +69,10 @@ class Phase1SendTests(unittest.TestCase):
 
     def test_exact_manual_send_returns_structured_skip_and_is_rerunnable(self) -> None:
         store = InMemoryStateStore()
-        message = self._parsed_message("manual-1", "QOTD - 2026-07-09")
+        message = self._parsed_message("manual-1", "QOTD - 07-09-26")
         config = SendQuestionConfig(
             game_date=date(2026, 7, 9),
             sender="sender@example.com",
-            contact_group_name="QOTD Participants",
             state_store=store,
             gmail_user="sender@example.com",
             oauth_client_id="",
@@ -88,7 +86,7 @@ class Phase1SendTests(unittest.TestCase):
 
         self.assertEqual(first.outcome, "skipped")
         self.assertEqual(first.reason, QUESTION_ALREADY_EXISTS)
-        self.assertEqual(first.subject, "QOTD - 2026-07-09")
+        self.assertEqual(first.subject, "QOTD - 07-09-26")
         self.assertEqual(first.matched_gmail_message_id, "manual-1")
         self.assertTrue(second.skipped_generated_send)
         self.assertEqual(len(store.read_question_records()), 1)
@@ -188,13 +186,12 @@ class Phase1SendTests(unittest.TestCase):
             SendQuestionConfig(
                 game_date=date(2026, 7, 13),
                 sender="sender@example.com",
-                contact_group_name="QOTD Participants",
                 state_store=store,
                 gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
-                participant_emails=("player@example.com",),
+                google_group_email="qotd-group@googlegroups.com",
                 dry_run=True,
             )
         )
@@ -240,13 +237,12 @@ class Phase1SendTests(unittest.TestCase):
             SendQuestionConfig(
                 game_date=date(2026, 7, 10),
                 sender="sender@example.com",
-                contact_group_name="QOTD Participants",
                 state_store=store,
                 gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
-                participant_emails=("player@example.com",),
+                google_group_email="qotd-group@googlegroups.com",
                 dry_run=True,
             )
         )
@@ -275,47 +271,17 @@ class Phase1SendTests(unittest.TestCase):
             SendQuestionConfig(
                 game_date=date(2026, 7, 10),
                 sender="sender@example.com",
-                contact_group_name="QOTD Participants",
                 state_store=store,
                 gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
-                participant_emails=("player@example.com",),
+                google_group_email="qotd-group@googlegroups.com",
                 dry_run=True,
             )
         )
 
         self.assertNotIn("The correct answer on", result.email_body)
-
-    def test_contact_group_matching_uses_exact_name(self) -> None:
-        group = find_contact_group(
-            [
-                {"name": "QOTD Participants Archive", "resourceName": "contactGroups/1"},
-                {"name": "QOTD Participants", "resourceName": "contactGroups/2"},
-            ],
-            "QOTD Participants",
-        )
-
-        self.assertEqual(group["resourceName"], "contactGroups/2")
-
-    def test_extract_contact_email_addresses_normalizes_and_dedupes(self) -> None:
-        email_addresses = extract_email_addresses(
-            [
-                {
-                    "person": {
-                        "emailAddresses": [
-                            {"value": " First@example.com "},
-                            {"value": "first@EXAMPLE.com"},
-                        ]
-                    }
-                },
-                {"person": {"emailAddresses": [{"value": "second@example.com"}]}},
-                {"person": {"names": [{"displayName": "No Email"}]}},
-            ]
-        )
-
-        self.assertEqual(email_addresses, ["first@example.com", "second@example.com"])
 
     def test_normalize_email_addresses_ignores_blank_values(self) -> None:
         self.assertEqual(
@@ -351,13 +317,12 @@ class Phase1SendTests(unittest.TestCase):
             SendQuestionConfig(
                 game_date=date(2026, 7, 9),
                 sender="sender@example.com",
-                contact_group_name="QOTD Participants",
                 state_store=store,
                 gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
                 oauth_refresh_token="",
-                participant_emails=("Player@example.com", "player@example.com"),
+                google_group_email="qotd-group@googlegroups.com",
                 dry_run=True,
             )
         )

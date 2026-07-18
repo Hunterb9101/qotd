@@ -12,9 +12,9 @@ Normative terms such as **must**, **must not**, and **should** describe required
 
 The application is divided into four layers:
 
-- `qotd/domain`: business models, date rules, scoring, and deterministic validation. Domain code must not call Gmail, Google Contacts, BigQuery, OpenAI, or web-search APIs.
+- `qotd/domain`: business models, date rules, scoring, and deterministic validation. Domain code must not call Gmail, BigQuery, OpenAI, or web-search APIs.
 - `qotd/usecases`: orchestration for one business workflow. Use cases receive external capabilities through configuration or injected interfaces so they can be tested without live services.
-- `qotd/external`: adapters for Gmail, Google Contacts, BigQuery, OpenAI, and web search.
+- `qotd/external`: adapters for Gmail, BigQuery, OpenAI, and web search.
 - `qotd/presentation`: email construction, templates, and organizer-report rendering.
 
 Prompts used at runtime must live inside the `qotd` package beside the use case or adapter that owns them. Runtime code must not depend on repository-level `docs/prompts` paths.
@@ -23,8 +23,8 @@ Prompts used at runtime must live inside the `qotd` package beside the use case 
 
 - Runtime: Python.
 - Scheduling: GitHub Actions.
-- Email: Gmail API using OAuth user consent for the account configured by `QOTD_SENDER`, unless delegated service-account access is proven to work for the account.
-- Participants: a named Google Contacts group accessed through the Google People API.
+- Email: Gmail API using OAuth user consent for the account configured by `QOTD_SENDER`, unless delegated service-account access is proven to work for the account. Automated participant questions are delivered to the private Google Group configured by `QOTD_GOOGLE_GROUP_EMAIL`.
+- Participants: a private, invitation-only Google Group used for delivery; runtime scoring does not enumerate Group membership.
 - Persistent state: BigQuery.
 - Language model: OpenAI structured outputs behind the existing provider-neutral `LLMClient` interface.
 - Research: a web-search adapter behind a provider-neutral `WebSearchClient` interface.
@@ -46,34 +46,35 @@ On weekdays:
 
 At 12:00 PM Mountain on weekdays, the send-question workflow must:
 
-1. Calculate the participant subject using the shared subject builder: `QOTD - YYYY-MM-DD`, where the date is the current Mountain-time game date.
+1. Calculate the participant subject using the shared subject builder: `QOTD - MM-DD-YY`, where the date is the current Mountain-time game date.
 2. Search sent mail for an exact subject match for that game date.
 3. If an exact match exists, treat it as the day's already-sent QOTD, persist it as a manual question when it is not already stored, log an explicit skip reason, and do not generate or send another question.
 4. If no exact match exists, generate, validate, send, and store one question.
 
 All participant-facing question emails, whether composed by automation or by the organizer, must use the same exact subject convention. Organizer scoring updates, alerts, confirmations, and management messages must use other subject prefixes and therefore cannot match the question search.
 
+Automated participant-facing messages must address only `QOTD_GOOGLE_GROUP_EMAIL`, set `Reply-To` to `QOTD_SENDER`, and must not expose participant addresses in `To`, `Cc`, or `Bcc`. Production sends must fail closed when the Group address is missing. The private Group must restrict new-question posting to the organizer and direct replies to the original author rather than the Group.
+
 Detection must not use a broad `subject:QOTD` query or infer authorship from the sender alone. The exact dated subject is the detection heuristic and idempotency boundary.
 
-## 5. Participant Source
+## 5. Participant Activity
 
-The named Google Contacts group is the canonical participant list.
+The private Google Group is the only organizer-managed participant list and controls delivery. QOTD does not access Google Contacts or enumerate free Google Group membership at runtime.
 
-- The noon workflow must resolve and normalize all email addresses from the configured group before sending.
-- The scoring workflow must score replies only from addresses present in that group.
+- The noon workflow sends one message to the configured Group address and does not validate whether the Group is empty.
+- The scoring workflow scores any reply correlated to the applicable stored question.
 - Email comparison must be case-insensitive after normalization.
-- Explicit participant addresses may be injected in tests and local dry runs, but production must use the configured Google Contacts group.
-- An empty or inaccessible group is an operational failure. The system must alert the organizer and must not send a participant email.
-- The organizer update must report group members with no eligible reply as non-respondents.
-
-Reply-sender discovery is not a participant-management mechanism and must not make an unknown sender eligible for scoring.
+- Automated monthly score rows are written only when a participant earns a point. Append-only manual corrections may write a non-positive total, which remains excluded from standings.
+- Current standings contain only positive scores from the current `MMYY` series.
+- The organizer update reports as non-respondents only current-month positive scorers who have no eligible reply for the game day.
+- A participant who has no positive current-month score is omitted from standings and non-respondent reporting until earning a point.
 
 ## 6. Email Correlation
 
 The participant question subject is built in one shared function used by both message construction and manual-send detection:
 
 ```text
-QOTD - 2026-07-10
+QOTD - 07-10-26
 ```
 
 Replies should be correlated to the stored outbound Gmail message/thread ID when available. Subject and date filtering may be used to retrieve a broad candidate set, but code must apply exact timestamps and sender eligibility before scoring.
@@ -132,7 +133,7 @@ Correct-answer changes and score adjustments must be append-only audit records w
 
 The answer window begins after the stored question's send time and ends immediately before 7:00 AM Mountain on the scoring date. A reply received at or after the cutoff is late and receives no point.
 
-For each eligible Google Contacts participant:
+For each correlated reply sender:
 
 1. Collect replies belonging to the game question.
 2. Select the latest reply before the cutoff.
@@ -156,7 +157,7 @@ The weekday organizer-only update must contain:
 - each participant with no eligible reply;
 - late replies;
 - responses requiring review, including Gmail message IDs and a prefilled adjustment template;
-- current standings for every participant in the Google Contacts group;
+- current standings for participants with positive current-month points;
 - monthly winner/reset information when applicable;
 - operational warnings.
 
@@ -259,7 +260,7 @@ CLI commands must support dry runs and idempotent reruns for question sending, s
 
 ## 13. Failure Handling and Observability
 
-Participant-facing sends fail closed. If participant resolution, manual-send detection, generation, validation, source verification, or Gmail sending fails, the system must not send a question.
+Participant-facing sends fail closed. If the Group delivery address is missing, or manual-send detection, generation, validation, source verification, or Gmail sending fails, the system must not send a question.
 
 Every workflow must emit concise structured logs containing job name, game date, outcome, and identifiers needed for diagnosis. A skipped noon send is a successful, explicit outcome and must log:
 
@@ -277,7 +278,9 @@ Unit and integration-style tests with fake adapters must cover:
 - exact dated subject construction and matching;
 - scoring updates not matching the participant-question subject;
 - manual question detection and explicit skip logging;
-- Google Contacts normalization, empty groups, and unknown senders;
+- private Group addressing with no participant addresses exposed in message headers;
+- correlated replies being eligible without a separate participant roster;
+- positive-only monthly score persistence and non-respondent reporting;
 - exact cutoff boundaries, Monday/Friday behavior, and Mountain time;
 - latest eligible response selection;
 - humorous freeform answers with a clear choice;
@@ -295,7 +298,7 @@ Live-service tests must be optional and must never send participant email by def
 
 1. Centralize participant-question subject construction and exact-match detection.
 2. Move runtime prompts into the package and correct their behavioral guidance.
-3. Make Google Contacts eligibility consistent across send and score workflows.
+3. Route participant delivery through the configured private Google Group.
 4. Replace category ordering and novelty orchestration with random category/topic selection.
 5. Add the injected web-search interface, production adapter, and fake test adapter.
 6. Generate and verify questions from retrieved evidence.

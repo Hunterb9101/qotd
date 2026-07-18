@@ -45,6 +45,7 @@ def gmail_message(
     sender: str,
     body: str,
     sent_at: datetime,
+    subject: str = "Re: QOTD - 07-09-26",
 ) -> dict[str, object]:
     """Build a minimal Gmail API message fixture."""
 
@@ -55,7 +56,7 @@ def gmail_message(
         "payload": {
             "headers": [
                 {"name": "From", "value": sender},
-                {"name": "Subject", "value": "Re: QOTD"},
+                {"name": "Subject", "value": subject},
             ],
             "body": {"data": gmail_body_data(body)},
             "mimeType": "text/plain",
@@ -69,6 +70,7 @@ def parsed_gmail_message(
     sender: str,
     body: str,
     sent_at: datetime,
+    subject: str = "Re: QOTD - 07-09-26",
 ) -> ParsedEmailMessage:
     """Build a parsed Gmail API message fixture."""
 
@@ -78,6 +80,7 @@ def parsed_gmail_message(
             sender=sender,
             body=body,
             sent_at=sent_at,
+            subject=subject,
         )
     )
 
@@ -86,7 +89,10 @@ class ResponseWorkflowTests(unittest.TestCase):
     def test_gmail_reply_query_uses_game_and_scoring_dates(self) -> None:
         query = gmail_reply_query(game_date=date(2026, 7, 9), scoring_date=date(2026, 7, 10))
 
-        self.assertEqual(query, "subject:QOTD after:2026/07/09 before:2026/07/11")
+        self.assertEqual(
+            query,
+            'subject:"QOTD - 07-09-26" after:2026/07/09 before:2026/07/11',
+        )
 
     def test_collect_reply_candidates_excludes_sender_and_presend_messages(self) -> None:
         messages = [
@@ -101,6 +107,13 @@ class ResponseWorkflowTests(unittest.TestCase):
                 sender="player@example.com",
                 body="B",
                 sent_at=datetime.fromisoformat("2026-07-09T17:00:00+00:00"),
+            ),
+            parsed_gmail_message(
+                message_id="unrelated",
+                sender="player@example.com",
+                body="B",
+                sent_at=datetime.fromisoformat("2026-07-09T19:00:00+00:00"),
+                subject="Re: QOTD - 07-08-26",
             ),
             parsed_gmail_message(
                 message_id="reply-1",
@@ -129,7 +142,6 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
-                participant_emails=("player@example.com",),
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
@@ -166,7 +178,6 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
-                participant_emails=("player@example.com",),
                 dry_run=True,
             ),
             fetch_messages=lambda _query: [
@@ -180,7 +191,10 @@ class ResponseWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(result.question.game_date, "2026-07-09")
-        self.assertEqual(result.gmail_query, "subject:QOTD after:2026/07/09 before:2026/07/11")
+        self.assertEqual(
+            result.gmail_query,
+            'subject:"QOTD - 07-09-26" after:2026/07/09 before:2026/07/11',
+        )
         self.assertEqual(result.organizer_message_id, "dry-run:2026-07-09")
 
     def test_score_responses_uses_ai_interpreter_for_freeform_replies_only(self) -> None:
@@ -207,7 +221,6 @@ class ResponseWorkflowTests(unittest.TestCase):
                 oauth_client_secret="client-secret",
                 oauth_refresh_token="refresh-token",
                 state_store=store,
-                participant_emails=("exact@example.com", "freeform@example.com"),
                 answer_interpreter_factory=build_interpreter,
                 dry_run=True,
             ),

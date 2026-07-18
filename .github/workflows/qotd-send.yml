@@ -11,7 +11,7 @@ jobs:
     environment: production
     env:
       QOTD_SENDER: ${{ secrets.QOTD_SENDER }}
-      QOTD_CONTACT_GROUP_NAME: QOTD Participants
+      QOTD_GOOGLE_GROUP_EMAIL: ${{ secrets.QOTD_GOOGLE_GROUP_EMAIL }}
       GOOGLE_CLOUD_PROJECT: question-of-the-day-501919
       BIGQUERY_DATASET: qotd
       GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}

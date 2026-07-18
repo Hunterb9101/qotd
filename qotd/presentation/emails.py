@@ -13,20 +13,25 @@ from qotd.presentation.rendering import render_template
 def build_participant_email(
     question: Question,
     sender: str,
-    recipients: Sequence[str],
+    recipients: Sequence[str] = (),
     *,
+    delivery_address: str | None = None,
     previous_question: StoredQuestion | None = None,
     point_earners: Sequence[str] = (),
     standings: Sequence[MonthlyScore] = (),
 ) -> EmailMessage:
     """Build the participant-facing QOTD email without answer metadata."""
 
-    if not recipients:
-        raise ValueError("participant email must have at least one recipient")
+    if not delivery_address and not recipients:
+        raise ValueError("participant email must have a delivery address")
 
     message = EmailMessage()
-    message["To"] = sender
-    message["Bcc"] = ", ".join(recipients)
+    if delivery_address:
+        message["To"] = delivery_address
+        message["Reply-To"] = sender
+    else:
+        message["To"] = sender
+        message["Bcc"] = ", ".join(recipients)
     message["From"] = sender
     message["Subject"] = question_subject(question.game_date)
     message.set_content(
