@@ -14,11 +14,13 @@ from qotd.domain.validation import validate_question
 from qotd.external.auth.gcp import GOOGLE_TOKEN_URI, build_oauth_credentials
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.presentation.emails import build_participant_email
+from qotd.usecases.check_manual_question import (
+    detect_organizer_sent_question,
+    organizer_sent_query,
+)
 from qotd.usecases.send_question import (
     QUESTION_ALREADY_EXISTS,
     SendQuestionConfig,
-    organizer_sent_query,
-    detect_organizer_sent_question,
     send_question,
 )
 from tests.support import InMemoryStateStore

@@ -9,21 +9,24 @@ from datetime import date
 from itertools import product
 from pathlib import Path
 from typing import Callable, Literal, Protocol
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.categories import QUESTION_CATEGORIES
-from qotd.domain.models import Question
+from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.domain.validation import validate_question
 from qotd.external.llm.core import LLMClient
-from qotd.external.web_search.core import WebSearchClient, WebSearchResult
+from qotd.external.web_search.core import (
+    WebSearchClient,
+    WebSearchResult,
+    is_valid_web_search_result,
+)
+from qotd.usecases.discover_question_topic_from_web import discover_question_topic_from_web
+from qotd.usecases.repair_generated_question import QuestionRepairer
 
 
 DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"
-DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "repair_generated_question.md"
 DEFAULT_EVALUATION_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "evaluate_generated_question.md"
-DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "discover_question_topics.md"
 QUESTION_SUBJECT_LENSES = (
     "people, personalities, and celebrity",
     "everyday life, habits, and social customs",
@@ -51,28 +54,6 @@ QUESTION_STORY_ANGLES = (
     "an oddly specific anecdote with a memorable payoff",
 )
 _VOLATILE_TERMS = re.compile(r"\b(today|currently|current|latest|live|price|ranking|standings?)\b", re.IGNORECASE)
-
-
-@dataclass(frozen=True)
-class QuestionTopic:
-    """A researched topic candidate backed by retrieved evidence."""
-
-    title: str
-    summary: str
-    source_url: str
-    lenses: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class GeneratedQuestionCandidate:
-    """A generated question and the metadata needed to audit it."""
-
-    question: Question
-    topic_source: QuestionTopic
-    category: str
-    topic: str
-    source_urls: tuple[str, ...]
-    source_evidence: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -117,17 +98,6 @@ class GeneratedQuestionOutput(BaseModel):
     topic: str
 
 
-class RepairedQuestionOutput(BaseModel):
-    """Structured question fields returned by the focused repair pass."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prompt: str
-    options: QuestionOptionsOutput
-    correct_option: Literal["A", "B", "C", "D"]
-    source_note: str
-
-
 class QuestionQualityReviewOutput(BaseModel):
     """Structured quality review returned by an LLM evaluator."""
 
@@ -135,23 +105,6 @@ class QuestionQualityReviewOutput(BaseModel):
 
     approved: bool
     rejection_reasons: list[str]
-
-
-class DiscoveredTopicOutput(BaseModel):
-    """One volatile creative direction proposed for question research."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    title: str
-    summary: str
-
-
-class TopicDiscoveryOutput(BaseModel):
-    """Structured collection of proposed question topics."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    topics: list[DiscoveredTopicOutput]
 
 
 class QuestionGenerator(Protocol):
@@ -174,18 +127,6 @@ class QuestionEvaluator(Protocol):
 
     def __call__(self, candidate: GeneratedQuestionCandidate, /) -> tuple[str, ...]:
         """Return actionable rejection reasons, or an empty tuple when approved."""
-
-
-class QuestionRepairer(Protocol):
-    """Repair a rejected candidate without changing its topic or evidence."""
-
-    def __call__(
-        self,
-        candidate: GeneratedQuestionCandidate,
-        issues: tuple[str, ...],
-        /,
-    ) -> GeneratedQuestionCandidate:
-        """Return a focused revision of the supplied candidate."""
 
 
 @dataclass(frozen=True)
@@ -248,66 +189,6 @@ class LLMQuestionGenerator:
 
 
 @dataclass(frozen=True)
-class LLMQuestionRepairer:
-    """Repair a candidate while preserving its research and creative direction."""
-
-    llm_client: LLMClient
-    prompt_path: Path = DEFAULT_REPAIR_PROMPT_PATH
-    max_output_tokens: int = 8000
-
-    def __call__(
-        self,
-        candidate: GeneratedQuestionCandidate,
-        issues: tuple[str, ...],
-        /,
-    ) -> GeneratedQuestionCandidate:
-        """Return a minimally revised candidate that addresses the supplied issues."""
-
-        question = candidate.question
-        data = self.llm_client.create_structured_response(
-            prompt_path=self.prompt_path,
-            payload={
-                "category": candidate.category,
-                "topic": candidate.topic,
-                "question": {
-                    "prompt": question.prompt,
-                    "options": question.options,
-                    "correct_option": question.correct_option,
-                    "correct_answer": question.options.get(question.correct_option, ""),
-                    "source_note": question.source_note,
-                },
-                "sources": [
-                    {"url": url, "evidence": evidence}
-                    for url, evidence in zip(
-                        candidate.source_urls,
-                        candidate.source_evidence,
-                        strict=True,
-                    )
-                ],
-                "issues": list(issues),
-            },
-            response_model=RepairedQuestionOutput,
-            schema_name="qotd_repaired_question",
-            max_output_tokens=self.max_output_tokens,
-        )
-        return GeneratedQuestionCandidate(
-            question=Question(
-                game_date=question.game_date,
-                prompt=data.prompt,
-                options=data.options.model_dump(),
-                correct_option=data.correct_option,
-                source_note=data.source_note,
-                source_url=question.source_url,
-            ),
-            topic_source=candidate.topic_source,
-            category=candidate.category,
-            topic=candidate.topic,
-            source_urls=candidate.source_urls,
-            source_evidence=candidate.source_evidence,
-        )
-
-
-@dataclass(frozen=True)
 class LLMQuestionEvaluator:
     """Use an LLM to reject answer leakage and semantically unfair questions."""
 
@@ -341,37 +222,6 @@ class LLMQuestionEvaluator:
         if data.approved:
             return ()
         return reasons or ("LLM evaluator rejected the question without a specific reason",)
-
-
-@dataclass(frozen=True)
-class LLMTopicDiscoverer:
-    """Use web search and an editorial prompt to propose concrete topic entities."""
-
-    llm_client: LLMClient
-    prompt_path: Path = DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH
-    max_output_tokens: int = 12000
-
-    def search(self, query: str, *, limit: int = 5) -> tuple[WebSearchResult, ...]:
-        """Return prompt-planned topic entities through the web-search boundary."""
-
-        if limit < 1:
-            raise ValueError("topic discovery limit must be at least 1")
-        data = self.llm_client.create_structured_response(
-            prompt_path=self.prompt_path,
-            payload={"brief": query, "limit": limit},
-            response_model=TopicDiscoveryOutput,
-            schema_name="qotd_topic_discovery",
-            max_output_tokens=self.max_output_tokens,
-            tools=({"type": "web_search"},),
-        )
-        return tuple(
-            WebSearchResult(
-                title=topic.title,
-                url="",
-                snippet=topic.summary,
-            )
-            for topic in data.topics[:limit]
-        )
 
 
 @dataclass(frozen=True)
@@ -532,50 +382,6 @@ def choose_category(categories: tuple[str, ...], *, seed: str | int | None = Non
     return random.Random(seed).choice(cleaned)
 
 
-def _valid_search_result(result: WebSearchResult) -> bool:
-    parsed = urlparse(result.url)
-    return bool(
-        result.title.strip()
-        and result.snippet.strip()
-        and parsed.scheme in {"http", "https"}
-        and parsed.netloc
-    )
-
-
-def _authority_score(result: WebSearchResult) -> int:
-    host = (urlparse(result.url).hostname or "").casefold()
-    return int(host.endswith(".gov")) * 3 + int(host.endswith(".edu")) * 2 + int(host.endswith(".org"))
-
-
-def _valid_topic_direction(result: WebSearchResult) -> bool:
-    """Return whether discovery produced a usable title and creative direction."""
-
-    return bool(result.title.strip() and result.snippet.strip())
-
-
-def discover_topics(
-    search_client: WebSearchClient,
-    category: str,
-    *,
-    limit: int,
-    lenses: tuple[str, str] | None = None,
-    as_of_date: date | None = None,
-) -> tuple[WebSearchResult, ...]:
-    """Find viable topic directions, preferring authoritative evidence when present."""
-
-    lens_guidance = ""
-    if lenses is not None:
-        lens_guidance = f" subject lens: {lenses[0]}; story angle: {lenses[1]};"
-    date_guidance = f" as of date: {as_of_date.isoformat()};" if as_of_date is not None else ""
-    results = search_client.search(
-        f"{category} trivia facts;{date_guidance}{lens_guidance} surprising approachable topics; "
-        "timely creative directions",
-        limit=limit,
-    )
-    viable = [result for result in results if _valid_topic_direction(result)]
-    return tuple(sorted(viable, key=_authority_score, reverse=True))
-
-
 def validate_self_researched_candidate(candidate: GeneratedQuestionCandidate) -> None:
     """Validate a candidate whose generator performed its own web research."""
 
@@ -588,7 +394,7 @@ def validate_self_researched_candidate(candidate: GeneratedQuestionCandidate) ->
         raise ValueError("question must cite one or more distinct source URLs")
     if len(candidate.source_urls) != len(candidate.source_evidence):
         raise ValueError("each source URL must have supporting evidence")
-    if any(not _valid_search_result(WebSearchResult("source", url, evidence)) for url, evidence in zip(
+    if any(not is_valid_web_search_result(WebSearchResult("source", url, evidence)) for url, evidence in zip(
         candidate.source_urls,
         candidate.source_evidence,
         strict=True,
@@ -624,7 +430,7 @@ def validate_researched_candidate(
     if not candidate.source_urls or len(candidate.source_urls) != len(set(candidate.source_urls)):
         raise ValueError("question must cite one or more distinct source URLs")
 
-    evidence_by_url = {item.url: item.snippet for item in evidence if _valid_search_result(item)}
+    evidence_by_url = {item.url: item.snippet for item in evidence if is_valid_web_search_result(item)}
     if any(url not in evidence_by_url for url in candidate.source_urls):
         raise ValueError("all source URLs must come from retrieved evidence")
     cited_text = " ".join(evidence_by_url[url] for url in candidate.source_urls).casefold()
@@ -662,7 +468,6 @@ def generate_researched_question(
         raise ValueError("search_result_limit must be at least 1")
 
     seed = config.seed if config.seed is not None else config.game_date.isoformat()
-    rng = random.Random(seed)
     category = choose_category(config.categories, seed=seed)
     lenses = choose_lens_pairs(1, seed=seed)[0]
     rejection_reasons: list[str] = []
@@ -674,27 +479,21 @@ def generate_researched_question(
             if candidate is not None and repair_question is not None:
                 candidate = repair_question(candidate, issues)
             else:
-                evidence = discover_topics(
+                discovered = discover_question_topic_from_web(
                     search_client,
-                    category,
-                    limit=config.search_result_limit,
+                    category=category,
+                    game_date=config.game_date,
                     lenses=lenses,
-                    as_of_date=config.game_date,
+                    limit=config.search_result_limit,
+                    seed=seed,
                 )
-                if not evidence:
+                if discovered is None:
                     issues = ("search returned no viable evidence",)
                     rejection_reasons.append(_rejection_summary(attempt, issues))
                     continue
-                topic_result = rng.choice(evidence)
-                topic = QuestionTopic(
-                    topic_result.title,
-                    topic_result.snippet,
-                    topic_result.url,
-                    lenses=lenses,
-                )
-                research_evidence = tuple(item for item in evidence if _valid_search_result(item))
+                research_evidence = discovered.evidence
                 candidate = generate_question(
-                    topic,
+                    discovered.topic,
                     category,
                     config.game_date,
                     research_evidence,

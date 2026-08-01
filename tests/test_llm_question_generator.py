@@ -7,27 +7,29 @@ from pathlib import Path
 from typing import Any, cast
 
 from qotd.domain.categories import QUESTION_CATEGORIES
-from qotd.domain.models import Question
+from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.external.llm.openai import render_prompt
 from qotd.external.web_search.core import WebSearchResult
+from qotd.usecases.discover_question_topic_from_web import (
+    DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH,
+    LLMTopicDiscoverer,
+)
 from qotd.usecases.generate_question_for_topic import (
     DEFAULT_EVALUATION_PROMPT_PATH,
     DEFAULT_PROMPT_PATH,
-    DEFAULT_REPAIR_PROMPT_PATH,
-    DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH,
     GenerateQuestionSamplesConfig,
-    GeneratedQuestionCandidate,
     LLMQuestionEvaluator,
     LLMQuestionGenerator,
-    LLMQuestionRepairer,
-    LLMTopicDiscoverer,
     QUESTION_STORY_ANGLES,
     QUESTION_SUBJECT_LENSES,
     QuestionGenerator,
-    QuestionTopic,
     choose_categories,
     choose_lens_pairs,
     generate_question_samples,
+)
+from qotd.usecases.repair_generated_question import (
+    DEFAULT_REPAIR_PROMPT_PATH,
+    RepairGeneratedQuestion,
 )
 
 
@@ -189,7 +191,7 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         self.assertEqual(len(topic_seen), 1)
         self.assertEqual(repair_issues, [("The prompt gives away the answer.",)])
 
-    def test_llm_repairer_uses_focused_prompt_and_preserves_candidate_context(self) -> None:
+    def test_repair_usecase_uses_focused_prompt_and_preserves_candidate_context(self) -> None:
         client = FakeLLMClient(
             {
                 "prompt": "Which U.S. state produces the most cheese?",
@@ -201,7 +203,7 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         topic = QuestionTopic("Cheese", "A food topic.", "")
         candidate = self.candidate(topic)
 
-        repaired = LLMQuestionRepairer(llm_client=client)(
+        repaired = RepairGeneratedQuestion(llm_client=client)(
             candidate,
             ("The original wording was ambiguous.",),
         )

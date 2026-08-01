@@ -20,13 +20,13 @@ from qotd.usecases.adjust_score import (
 )
 from qotd.usecases.score_responses import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
+from qotd.usecases.discover_question_topic_from_web import LLMTopicDiscoverer
+from qotd.usecases.repair_generated_question import RepairGeneratedQuestion
 from qotd.usecases.generate_question_for_topic import (
     GenerateQuestionSamplesConfig,
     GenerateResearchedQuestionConfig,
     LLMQuestionEvaluator,
     LLMQuestionGenerator,
-    LLMQuestionRepairer,
-    LLMTopicDiscoverer,
     generate_question_samples,
     generate_researched_question,
 )
@@ -232,7 +232,7 @@ def main() -> None:
                 GenerateResearchedQuestionConfig(game_date=game_date),
                 search_client=LLMTopicDiscoverer(llm_client=topic_discovery_client),
                 generate_question=llm_generator,
-                repair_question=LLMQuestionRepairer(llm_client=llm_client),
+                repair_question=RepairGeneratedQuestion(llm_client=llm_client),
                 evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
             ).candidate.question
 
@@ -276,7 +276,7 @@ def main() -> None:
                 llm_client=llm_client,
                 use_web_search=True,
             ),
-            repair_question=LLMQuestionRepairer(llm_client=llm_client),
+            repair_question=RepairGeneratedQuestion(llm_client=llm_client),
             evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
         )
         print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))

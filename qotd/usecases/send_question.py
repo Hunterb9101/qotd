@@ -15,11 +15,11 @@ from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import search_messages, send_gmail_message
 from qotd.external.storage.core import StorageClient
 from qotd.presentation.emails import build_participant_email
+from qotd.usecases.check_manual_question import MessageFetcher, check_manual_question
 from qotd.usecases.question_history import find_latest_answered_question_before
 from qotd.usecases.score_history import ParticipantResults, load_participant_results
 
 
-MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
 QuestionGeneratorForDate = Callable[[date, StorageClient], Question]
 LOGGER = logging.getLogger(__name__)
 QUESTION_ALREADY_EXISTS = "question_subject_already_exists"
@@ -55,33 +55,6 @@ class SendQuestionResult:
     matched_gmail_message_id: str | None = None
 
 
-def organizer_sent_query(*, sender: str, game_date: date) -> str:
-    """Build a Gmail query for the exact dated participant question."""
-
-    return f'in:sent from:{sender} subject:"{question_subject(game_date)}"'
-
-
-def detect_organizer_sent_question(
-    messages: list[ParsedEmailMessage],
-    *,
-    sender: str,
-    game_date: date,
-) -> ParsedEmailMessage | None:
-    """Return the first message whose subject exactly identifies the game date."""
-
-    sender_email = sender.lower()
-    expected_subject = question_subject(game_date)
-    for message in messages:
-        if message.sender_email.lower() != sender_email:
-            continue
-        if message.subject != expected_subject:
-            continue
-        if message.message_id.startswith("dry-run:"):
-            continue
-        return message
-    return None
-
-
 def send_question(
     config: SendQuestionConfig,
     *,
@@ -100,29 +73,13 @@ def send_question(
             )
 
     if fetch_messages is not None:
-        cody_message = detect_organizer_sent_question(
-            fetch_messages(organizer_sent_query(sender=config.sender, game_date=config.game_date)),
-            sender=config.sender,
+        manual_question = check_manual_question(
             game_date=config.game_date,
+            sender=config.sender,
+            state_store=config.state_store,
+            fetch_messages=fetch_messages,
         )
-        if cody_message is not None:
-            record = StoredQuestion(
-                game_date=config.game_date.isoformat(),
-                prompt=cody_message.body_text,
-                options={},
-                correct_option="",
-                source_note="Manual QOTD sent by Cody; correct answer pending.",
-                source_url="",
-                source="manual",
-                gmail_message_id=cody_message.message_id,
-                created_at=(cody_message.sent_at or datetime.now(UTC)).isoformat(),
-            )
-            already_stored = any(
-                existing.get("game_date") == record.game_date
-                for existing in config.state_store.read_question_records()
-            )
-            if not already_stored:
-                config.state_store.append_question_record(record)
+        if manual_question is not None:
             subject = question_subject(config.game_date)
             LOGGER.info(
                 "job=send_question game_date=%s outcome=skipped "
@@ -130,17 +87,17 @@ def send_question(
                 config.game_date.isoformat(),
                 QUESTION_ALREADY_EXISTS,
                 subject,
-                cody_message.message_id,
+                manual_question.gmail_message_id,
             )
             return SendQuestionResult(
-                record=record,
-                email_body=cody_message.body_text,
+                record=manual_question,
+                email_body=manual_question.prompt,
                 recipient_count=0,
                 skipped_generated_send=True,
                 outcome="skipped",
                 reason=QUESTION_ALREADY_EXISTS,
                 subject=subject,
-                matched_gmail_message_id=cody_message.message_id,
+                matched_gmail_message_id=manual_question.gmail_message_id,
             )
 
     google_group_email = config.google_group_email.strip().lower()

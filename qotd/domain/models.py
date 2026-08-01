@@ -11,6 +11,16 @@ OPTION_LABELS = ("A", "B", "C", "D")
 
 
 @dataclass(frozen=True)
+class QuestionTopic:
+    """Topic direction used to generate a question."""
+
+    title: str
+    summary: str
+    source_url: str
+    lenses: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Question:
     """Structured generated question data."""
 
@@ -21,6 +31,18 @@ class Question:
     source_note: str
     source_url: str
     source: str = "generated"
+
+
+@dataclass(frozen=True)
+class GeneratedQuestionCandidate:
+    """Generated question and the metadata needed to audit it."""
+
+    question: Question
+    topic_source: QuestionTopic
+    category: str
+    topic: str
+    source_urls: tuple[str, ...]
+    source_evidence: tuple[str, ...]
 
 
 @dataclass(frozen=True)

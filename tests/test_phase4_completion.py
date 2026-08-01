@@ -8,13 +8,14 @@ from qotd.domain.dates import is_final_weekday_of_month
 from qotd.domain.models import StoredQuestion
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.presentation.organizer_updates import build_organizer_update_body
+from qotd.usecases.check_manual_question import organizer_sent_query
 from qotd.usecases.correct_answer import (
     ProcessCorrectAnswerEmailsConfig,
     parse_correct_answer_email,
     process_correct_answer_emails,
 )
 from qotd.usecases.score_responses import ScoreResponsesConfig, load_question_for_game_date, score_responses
-from qotd.usecases.send_question import SendQuestionConfig, organizer_sent_query, send_question
+from qotd.usecases.send_question import SendQuestionConfig, send_question
 from tests.support import InMemoryStateStore
 
 
