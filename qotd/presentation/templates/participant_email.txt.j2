@@ -10,12 +10,30 @@ Points earned:
 - None
 {% endfor %}
 
+{% if is_month_end_recap -%}
+Final standings for {{ previous_question.game_date[:7] }}:
+{% for score in standings -%}
+{{ loop.index }}. {{ score.email }} — {{ score.points }}
+{% else -%}
+- None
+{% endfor %}
+
+Monthly winners:
+{% for winner in monthly_winners -%}
+- {{ winner.email }} with {{ winner.points }} points
+{% else -%}
+- No scored participants this month
+{% endfor %}
+
+A new monthly competition starts today with clean standings.
+{% else -%}
 Current standings:
 {% for score in standings -%}
 {{ loop.index }}. {{ score.email }} — {{ score.points }}
 {% else -%}
 - None
 {% endfor %}
+{% endif %}
 
 {% endif -%}
 {{ question.prompt }}

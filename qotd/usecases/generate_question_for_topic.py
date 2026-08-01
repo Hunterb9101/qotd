@@ -21,6 +21,7 @@ from qotd.external.web_search.core import WebSearchClient, WebSearchResult
 
 
 DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"
+DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "repair_generated_question.md"
 DEFAULT_EVALUATION_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "evaluate_generated_question.md"
 DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "discover_question_topics.md"
 QUESTION_SUBJECT_LENSES = (
@@ -116,6 +117,17 @@ class GeneratedQuestionOutput(BaseModel):
     topic: str
 
 
+class RepairedQuestionOutput(BaseModel):
+    """Structured question fields returned by the focused repair pass."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str
+    options: QuestionOptionsOutput
+    correct_option: Literal["A", "B", "C", "D"]
+    source_note: str
+
+
 class QuestionQualityReviewOutput(BaseModel):
     """Structured quality review returned by an LLM evaluator."""
 
@@ -162,6 +174,18 @@ class QuestionEvaluator(Protocol):
 
     def __call__(self, candidate: GeneratedQuestionCandidate, /) -> tuple[str, ...]:
         """Return actionable rejection reasons, or an empty tuple when approved."""
+
+
+class QuestionRepairer(Protocol):
+    """Repair a rejected candidate without changing its topic or evidence."""
+
+    def __call__(
+        self,
+        candidate: GeneratedQuestionCandidate,
+        issues: tuple[str, ...],
+        /,
+    ) -> GeneratedQuestionCandidate:
+        """Return a focused revision of the supplied candidate."""
 
 
 @dataclass(frozen=True)
@@ -220,6 +244,66 @@ class LLMQuestionGenerator:
             topic=data.topic,
             source_urls=source_urls,
             source_evidence=source_evidence,
+        )
+
+
+@dataclass(frozen=True)
+class LLMQuestionRepairer:
+    """Repair a candidate while preserving its research and creative direction."""
+
+    llm_client: LLMClient
+    prompt_path: Path = DEFAULT_REPAIR_PROMPT_PATH
+    max_output_tokens: int = 8000
+
+    def __call__(
+        self,
+        candidate: GeneratedQuestionCandidate,
+        issues: tuple[str, ...],
+        /,
+    ) -> GeneratedQuestionCandidate:
+        """Return a minimally revised candidate that addresses the supplied issues."""
+
+        question = candidate.question
+        data = self.llm_client.create_structured_response(
+            prompt_path=self.prompt_path,
+            payload={
+                "category": candidate.category,
+                "topic": candidate.topic,
+                "question": {
+                    "prompt": question.prompt,
+                    "options": question.options,
+                    "correct_option": question.correct_option,
+                    "correct_answer": question.options.get(question.correct_option, ""),
+                    "source_note": question.source_note,
+                },
+                "sources": [
+                    {"url": url, "evidence": evidence}
+                    for url, evidence in zip(
+                        candidate.source_urls,
+                        candidate.source_evidence,
+                        strict=True,
+                    )
+                ],
+                "issues": list(issues),
+            },
+            response_model=RepairedQuestionOutput,
+            schema_name="qotd_repaired_question",
+            max_output_tokens=self.max_output_tokens,
+        )
+        return GeneratedQuestionCandidate(
+            question=Question(
+                game_date=question.game_date,
+                prompt=data.prompt,
+                options=data.options.model_dump(),
+                correct_option=data.correct_option,
+                source_note=data.source_note,
+                source_url=question.source_url,
+            ),
+            topic_source=candidate.topic_source,
+            category=candidate.category,
+            topic=candidate.topic,
+            source_urls=candidate.source_urls,
+            source_evidence=candidate.source_evidence,
         )
 
 
@@ -315,12 +399,37 @@ class GenerateQuestionSamplesConfig:
 
 
 FailureAlert = Callable[[str], None]
+CandidateValidator = Callable[[GeneratedQuestionCandidate], None]
+
+
+def _candidate_issues(
+    candidate: GeneratedQuestionCandidate,
+    *,
+    validate_candidate: CandidateValidator,
+    evaluate_question: QuestionEvaluator | None,
+) -> tuple[str, ...]:
+    """Return the concrete issues that a focused repair pass must address."""
+
+    try:
+        validate_candidate(candidate)
+    except ValueError as exc:
+        return (str(exc),)
+    if evaluate_question is None:
+        return ()
+    return evaluate_question(candidate)
+
+
+def _rejection_summary(attempt: int, issues: tuple[str, ...]) -> str:
+    """Build a concise diagnostic for logs and terminal failure messages."""
+
+    return f"attempt {attempt}: " + "; ".join(issues)
 
 
 def generate_question_samples(
     config: GenerateQuestionSamplesConfig,
     *,
     generate_question: QuestionGenerator,
+    repair_question: QuestionRepairer | None = None,
     evaluate_question: QuestionEvaluator | None = None,
 ) -> tuple[GeneratedQuestionCandidate, ...]:
     """Generate reviewable candidates without sending or persisting them."""
@@ -347,21 +456,34 @@ def generate_question_samples(
             lenses=lenses,
         )
         rejection_reasons: list[str] = []
+        candidate: GeneratedQuestionCandidate | None = None
+        issues: tuple[str, ...] = ()
         for attempt in range(1, config.attempts + 1):
             try:
-                candidate = generate_question(
-                    topic,
-                    category,
-                    config.game_date,
-                    (),
-                    tuple(rejection_reasons),
-                )
-                validate_question(candidate.question)
-                evaluation_reasons = evaluate_question(candidate) if evaluate_question is not None else ()
-                if evaluation_reasons:
-                    raise ValueError("; ".join(evaluation_reasons))
+                if candidate is not None and repair_question is not None:
+                    candidate = repair_question(candidate, issues)
+                else:
+                    candidate = generate_question(
+                        topic,
+                        category,
+                        config.game_date,
+                        (),
+                        tuple(rejection_reasons),
+                    )
             except ValueError as exc:
-                rejection_reasons.append(f"attempt {attempt}: {exc}")
+                issues = (str(exc),)
+                rejection_reasons.append(_rejection_summary(attempt, issues))
+                candidate = None
+                continue
+            issues = _candidate_issues(
+                candidate,
+                validate_candidate=lambda item: validate_question(item.question),
+                evaluate_question=evaluate_question,
+            )
+            if issues:
+                rejection_reasons.append(_rejection_summary(attempt, issues))
+                if repair_question is None:
+                    candidate = None
                 continue
             candidates.append(candidate)
             break
@@ -528,6 +650,7 @@ def generate_researched_question(
     *,
     search_client: WebSearchClient,
     generate_question: QuestionGenerator,
+    repair_question: QuestionRepairer | None = None,
     evaluate_question: QuestionEvaluator | None = None,
     alert_organizer: FailureAlert | None = None,
 ) -> ResearchedQuestionResult:
@@ -543,42 +666,62 @@ def generate_researched_question(
     category = choose_category(config.categories, seed=seed)
     lenses = choose_lens_pairs(1, seed=seed)[0]
     rejection_reasons: list[str] = []
+    candidate: GeneratedQuestionCandidate | None = None
+    research_evidence: tuple[WebSearchResult, ...] = ()
+    issues: tuple[str, ...] = ()
     for attempt in range(1, config.attempts + 1):
-        evidence = discover_topics(
-            search_client,
-            category,
-            limit=config.search_result_limit,
-            lenses=lenses,
-            as_of_date=config.game_date,
-        )
-        if not evidence:
-            rejection_reasons.append(f"attempt {attempt}: search returned no viable evidence")
-            continue
-        topic_result = rng.choice(evidence)
-        topic = QuestionTopic(
-            topic_result.title,
-            topic_result.snippet,
-            topic_result.url,
-            lenses=lenses,
-        )
-        research_evidence = tuple(item for item in evidence if _valid_search_result(item))
         try:
-            candidate = generate_question(
-                topic,
-                category,
-                config.game_date,
-                research_evidence,
-                tuple(rejection_reasons),
-            )
-            if research_evidence:
-                validate_researched_candidate(candidate, research_evidence)
+            if candidate is not None and repair_question is not None:
+                candidate = repair_question(candidate, issues)
             else:
-                validate_self_researched_candidate(candidate)
-            evaluation_reasons = evaluate_question(candidate) if evaluate_question is not None else ()
-            if evaluation_reasons:
-                raise ValueError("; ".join(evaluation_reasons))
+                evidence = discover_topics(
+                    search_client,
+                    category,
+                    limit=config.search_result_limit,
+                    lenses=lenses,
+                    as_of_date=config.game_date,
+                )
+                if not evidence:
+                    issues = ("search returned no viable evidence",)
+                    rejection_reasons.append(_rejection_summary(attempt, issues))
+                    continue
+                topic_result = rng.choice(evidence)
+                topic = QuestionTopic(
+                    topic_result.title,
+                    topic_result.snippet,
+                    topic_result.url,
+                    lenses=lenses,
+                )
+                research_evidence = tuple(item for item in evidence if _valid_search_result(item))
+                candidate = generate_question(
+                    topic,
+                    category,
+                    config.game_date,
+                    research_evidence,
+                    tuple(rejection_reasons),
+                )
         except ValueError as exc:
-            rejection_reasons.append(f"attempt {attempt}: {exc}")
+            issues = (str(exc),)
+            rejection_reasons.append(_rejection_summary(attempt, issues))
+            candidate = None
+            continue
+        validator: CandidateValidator
+        if research_evidence:
+            def validate_with_research(item: GeneratedQuestionCandidate) -> None:
+                validate_researched_candidate(item, research_evidence)
+
+            validator = validate_with_research
+        else:
+            validator = validate_self_researched_candidate
+        issues = _candidate_issues(
+            candidate,
+            validate_candidate=validator,
+            evaluate_question=evaluate_question,
+        )
+        if issues:
+            rejection_reasons.append(_rejection_summary(attempt, issues))
+            if repair_question is None:
+                candidate = None
             continue
         return ResearchedQuestionResult(candidate, attempt, tuple(rejection_reasons))
 

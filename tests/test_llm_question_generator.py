@@ -13,11 +13,13 @@ from qotd.external.web_search.core import WebSearchResult
 from qotd.usecases.generate_question_for_topic import (
     DEFAULT_EVALUATION_PROMPT_PATH,
     DEFAULT_PROMPT_PATH,
+    DEFAULT_REPAIR_PROMPT_PATH,
     DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH,
     GenerateQuestionSamplesConfig,
     GeneratedQuestionCandidate,
     LLMQuestionEvaluator,
     LLMQuestionGenerator,
+    LLMQuestionRepairer,
     LLMTopicDiscoverer,
     QUESTION_STORY_ANGLES,
     QUESTION_SUBJECT_LENSES,
@@ -159,13 +161,16 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
 
     def test_generate_samples_retries_after_llm_quality_rejection(self) -> None:
         topic_seen: list[tuple[str, ...]] = []
-        generation_reasons: list[tuple[str, ...]] = []
+        repair_issues: list[tuple[str, ...]] = []
         evaluations = iter((("The prompt gives away the answer.",), ()))
 
         def generate(topic, category, game_date, evidence, rejection_reasons):
             topic_seen.append(topic.lenses)
-            generation_reasons.append(rejection_reasons)
             return self.candidate(topic, category)
+
+        def repair(candidate, issues):
+            repair_issues.append(issues)
+            return candidate
 
         candidates = generate_question_samples(
             GenerateQuestionSamplesConfig(
@@ -176,14 +181,43 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                 attempts=2,
             ),
             generate_question=generate,
+            repair_question=repair,
             evaluate_question=lambda candidate: next(evaluations),
         )
 
         self.assertEqual(len(candidates), 1)
-        self.assertEqual(len(topic_seen), 2)
-        self.assertEqual(topic_seen[0], topic_seen[1])
-        self.assertFalse(generation_reasons[0])
-        self.assertIn("gives away", generation_reasons[1][0])
+        self.assertEqual(len(topic_seen), 1)
+        self.assertEqual(repair_issues, [("The prompt gives away the answer.",)])
+
+    def test_llm_repairer_uses_focused_prompt_and_preserves_candidate_context(self) -> None:
+        client = FakeLLMClient(
+            {
+                "prompt": "Which U.S. state produces the most cheese?",
+                "options": {"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
+                "correct_option": "C",
+                "source_note": "USDA cheese production data.",
+            }
+        )
+        topic = QuestionTopic("Cheese", "A food topic.", "")
+        candidate = self.candidate(topic)
+
+        repaired = LLMQuestionRepairer(llm_client=client)(
+            candidate,
+            ("The original wording was ambiguous.",),
+        )
+
+        self.assertEqual(repaired.question.prompt, "Which U.S. state produces the most cheese?")
+        self.assertEqual(repaired.topic_source, candidate.topic_source)
+        self.assertEqual(repaired.category, candidate.category)
+        self.assertEqual(repaired.topic, candidate.topic)
+        self.assertEqual(repaired.source_urls, candidate.source_urls)
+        self.assertEqual(repaired.source_evidence, candidate.source_evidence)
+        call = client.calls[0]
+        self.assertEqual(call["prompt_path"], DEFAULT_REPAIR_PROMPT_PATH)
+        self.assertEqual(call["schema_name"], "qotd_repaired_question")
+        self.assertEqual(call["payload"]["issues"], ["The original wording was ambiguous."])
+        self.assertEqual(call["payload"]["question"]["correct_answer"], "Wisconsin")
+        self.assertEqual(call["tools"], ())
 
     def test_llm_evaluator_returns_actionable_rejection_reasons(self) -> None:
         client = FakeLLMClient(
@@ -324,6 +358,14 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         )
 
         self.assertIn("Use web search to research the topic", rendered)
+
+    def test_repair_prompt_requires_small_evidence_preserving_changes(self) -> None:
+        prompt = DEFAULT_REPAIR_PROMPT_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("Revise the candidate only enough", prompt)
+        self.assertIn("preserve its category, topic, underlying fact, source evidence", prompt)
+        self.assertIn("Prefer a small editorial correction over a rewrite", prompt)
+        self.assertIn("Do not add, replace, or invent sources", prompt)
 
     def test_llm_generator_maps_structured_response_to_candidate(self) -> None:
         output: dict[str, Any] = {

@@ -160,11 +160,17 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
     def test_whole_flow_retries_after_llm_quality_rejection(self) -> None:
         search = FakeWebSearchClient([(evidence(),), (evidence(),)])
         evaluations = iter((("The wording gives away Wisconsin.",), ()))
-        generated_reasons: list[tuple[str, ...]] = []
+        generated_candidates: list[GeneratedQuestionCandidate] = []
+        repair_calls: list[tuple[GeneratedQuestionCandidate, tuple[str, ...]]] = []
 
         def generate(topic, category, game_date, results, reasons):
-            generated_reasons.append(reasons)
-            return candidate_for(topic, category, game_date)
+            candidate = candidate_for(topic, category, game_date)
+            generated_candidates.append(candidate)
+            return candidate
+
+        def repair(candidate, issues):
+            repair_calls.append((candidate, issues))
+            return candidate
 
         result = generate_researched_question(
             GenerateResearchedQuestionConfig(
@@ -174,12 +180,16 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
             ),
             search_client=search,
             generate_question=generate,
+            repair_question=repair,
             evaluate_question=lambda candidate: next(evaluations),
         )
 
         self.assertEqual(result.attempts_used, 2)
         self.assertIn("gives away", result.rejection_reasons[0])
-        self.assertIn("gives away", generated_reasons[1][0])
+        self.assertEqual(len(search.calls), 1)
+        self.assertEqual(len(generated_candidates), 1)
+        self.assertEqual(repair_calls[0][0], generated_candidates[0])
+        self.assertEqual(repair_calls[0][1], ("The wording gives away Wisconsin.",))
 
     def test_exhaustion_alerts_and_fails_closed(self) -> None:
         search = FakeWebSearchClient([()])
