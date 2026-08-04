@@ -5,8 +5,10 @@ import unittest
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import patch
 
 from qotd.domain.categories import QUESTION_CATEGORIES
+from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.external.llm.openai import render_prompt
 from qotd.external.web_search.core import WebSearchResult
@@ -93,6 +95,17 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
             source_urls=("https://example.com/cheese-production",),
             source_evidence=("Wisconsin produces the most cheese.",),
         )
+
+    def test_shuffle_answer_options_keeps_correct_answer_with_its_new_label(self) -> None:
+        options = {"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"}
+        with patch("qotd.domain.generator.random.shuffle", side_effect=lambda answers: answers.reverse()):
+            shuffled_options, correct_option = shuffle_answer_options(options, "C")
+
+        self.assertEqual(
+            shuffled_options,
+            {"A": "Texas", "B": "Wisconsin", "C": "New York", "D": "California"},
+        )
+        self.assertEqual(correct_option, "B")
 
     def test_generate_samples_uses_supplied_topic_and_requested_count(self) -> None:
         calls: list[tuple[QuestionTopic, str]] = []
@@ -209,6 +222,7 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
         )
 
         self.assertEqual(repaired.question.prompt, "Which U.S. state produces the most cheese?")
+        self.assertEqual(repaired.question.options[repaired.question.correct_option], "Wisconsin")
         self.assertEqual(repaired.topic_source, candidate.topic_source)
         self.assertEqual(repaired.category, candidate.category)
         self.assertEqual(repaired.topic, candidate.topic)
@@ -411,17 +425,20 @@ class LLMQuestionGeneratorTests(unittest.TestCase):
                     snippet="Wisconsin produces the most cheese.",
                 ),
             )
-            candidate = generator(
-                topic,
-                "Food & Drink",
-                date(2026, 7, 10),
-                search_results,
-                ("previous failure",),
-            )
+            with patch(
+                "qotd.domain.generator.random.shuffle", side_effect=lambda answers: answers.reverse()
+            ):
+                candidate = generator(
+                    topic,
+                    "Food & Drink",
+                    date(2026, 7, 10),
+                    search_results,
+                    ("previous failure",),
+                )
 
         self.assertEqual(candidate.question.prompt, "Which state produces the most cheese?")
-        self.assertEqual(candidate.question.options["C"], "Wisconsin")
-        self.assertEqual(candidate.question.correct_option, "C")
+        self.assertEqual(candidate.question.options["B"], "Wisconsin")
+        self.assertEqual(candidate.question.correct_option, "B")
         self.assertEqual(candidate.topic_source, topic)
         self.assertEqual(candidate.category, "Food & Drink")
         self.assertEqual(candidate.source_urls, ("https://example.com/cheese-production",))

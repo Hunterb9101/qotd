@@ -13,6 +13,7 @@ from typing import Callable, Literal, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.categories import QUESTION_CATEGORIES
+from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.domain.validation import validate_question
 from qotd.external.llm.core import LLMClient
@@ -171,12 +172,15 @@ class LLMQuestionGenerator:
         source_evidence = tuple(
             evidence_by_url.get(source.url, source.evidence) for source in data.sources
         )
+        options, correct_option = shuffle_answer_options(
+            data.options.model_dump(), data.correct_option
+        )
         return GeneratedQuestionCandidate(
             question=Question(
                 game_date=game_date.isoformat(),
                 prompt=data.prompt,
-                options=data.options.model_dump(),
-                correct_option=data.correct_option,
+                options=options,
+                correct_option=correct_option,
                 source_note=data.source_note,
                 source_url=source_urls[0] if source_urls else "",
             ),

@@ -8,6 +8,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question
 from qotd.external.llm.core import LLMClient
 
@@ -81,12 +82,15 @@ class RepairGeneratedQuestion:
             schema_name="qotd_repaired_question",
             max_output_tokens=self.max_output_tokens,
         )
+        options, correct_option = shuffle_answer_options(
+            {str(label): value for label, value in data.options.items()}, data.correct_option
+        )
         return GeneratedQuestionCandidate(
             question=Question(
                 game_date=question.game_date,
                 prompt=data.prompt,
-                options={str(label): value for label, value in data.options.items()},
-                correct_option=data.correct_option,
+                options=options,
+                correct_option=correct_option,
                 source_note=data.source_note,
                 source_url=question.source_url,
             ),
