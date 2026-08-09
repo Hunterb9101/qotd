@@ -30,4 +30,4 @@ The recurring jobs run through GitHub Actions. Gmail handles delivery and replie
 - [Architecture Decision Records](docs/adr/)
 - [Project Requirement Docs](docs/prd/)
 - [Tone guidelines](docs/qotd_tone_guidelines.md)
-- [User journeys](docs/user-journeys.md)
+- [Game lifecycle](docs/game-lifecycle.md)

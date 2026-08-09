@@ -113,21 +113,37 @@ a [**Question**](#question).
 
 #### Submission
 
-A [**Player**](#player)’s response to a [**Question**](#question), submitted
-before that [**Question**](#question)’s [**Deadline**](#deadline). A
-[**Submission**](#submission) is eligible when it either selects an option from
-`A` through `D` or makes a loophole case for
+A [**Player**](#player)’s response to a [**Question**](#question). A
+[**Submission**](#submission) is eligible only when it is received before that
+[**Question**](#question)’s [**Deadline**](#deadline) and it either selects an
+option from `A` through `D` or makes a loophole case for
 an answer outside the multiple-choice options; a loophole case earns points
 only at the [**Organizer**](#organizer)’s discretion. A [**Player**](#player)
 may make multiple [**Submissions**](#submission) for a [**Game**](#game);
 scoring selects the latest eligible Submission. Each Submission retains its
-Gmail message identity, received time, original content, and interpreted
-option.
+Gmail message identity, received time, original content, interpreted option,
+eligibility status, and [**Ineligibility Reason**](#ineligibility-reason) when
+applicable.
+
+Use **Submission** only for a [**Player**](#player)’s response. An
+[**Organizer**](#organizer) sends an
+[**Organizer Instruction**](#organizer-instruction); an Organizer does not
+submit an [**Answer**](#answer).
+
+#### Ineligibility Reason
+
+The recorded reason a [**Submission**](#submission) is not used for scoring.
+
+- **superseded:** A later eligible Submission from the same [**Player**](#player)
+  for the same [**Game**](#game) is selected for scoring.
+- **late:** The Submission was received at or after the
+  [**Question**](#question)'s [**Deadline**](#deadline). A late Submission does
+  not supersede an earlier eligible Submission.
 
 ### Organizer Workflow
 
 #### Organizer Instruction
 
-A structured email action submitted by an approved [**Organizer**](#organizer).
+A structured email action sent by an approved [**Organizer**](#organizer).
 An **Organizer Instruction** may create a [**Score Event**](#score-event), set
 an [**Answer**](#answer), or add a [**Question**](#question).

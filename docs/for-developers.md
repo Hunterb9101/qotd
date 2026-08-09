@@ -67,6 +67,6 @@ Set `OPENAI_INTERPRETER_MODEL` to select the live evaluation model. Explicit int
 
 - [Technical notes](technical-notes.md)
 - [Tone guidelines](qotd_tone_guidelines.md)
-- [User journeys](user-journeys.md)
+- [Game lifecycle](game-lifecycle.md)
 - [Architecture decision: automatic sending](adr/adr-001-auto-send.md)
 - [Initial product requirements](prd/prd-initial.md)
