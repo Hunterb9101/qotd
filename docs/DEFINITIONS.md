@@ -120,10 +120,7 @@ option from `A` through `D` or makes a loophole case for
 an answer outside the multiple-choice options; a loophole case earns points
 only at the [**Organizer**](#organizer)’s discretion. A [**Player**](#player)
 may make multiple [**Submissions**](#submission) for a [**Game**](#game);
-scoring selects the latest eligible Submission. Each Submission retains its
-Gmail message identity, received time, original content, interpreted option,
-eligibility status, and [**Ineligibility Reason**](#ineligibility-reason) when
-applicable.
+scoring selects the latest eligible Submission.
 
 Use **Submission** only for a [**Player**](#player)’s response. An
 [**Organizer**](#organizer) sends an
