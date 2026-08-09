@@ -24,7 +24,7 @@ class AnswerInterpretation:
 
 @dataclass(frozen=True)
 class ScoredReply:
-    """Scoring result for one participant reply."""
+    """Scoring result for one Player Submission."""
 
     email: str
     gmail_message_id: str

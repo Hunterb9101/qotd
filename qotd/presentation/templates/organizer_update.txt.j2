@@ -3,7 +3,7 @@ QOTD scoring update for {{ question.game_date }}
 Question:
 {{ question.prompt }}
 
-Correct answer: {{ question.correct_option }}. {{ question.options[question.correct_option] }}
+Answer: {{ question.correct_option }}. {{ question.options[question.correct_option] }}
 Source: {{ question.source_url }}
 
 Correct replies:
@@ -25,8 +25,8 @@ Needs review:
 - {{ reply.email }}: {{ reply.interpreted_option }}
   Adjustment template:
   Action: adjust-score
-  Participant: {{ reply.email }}
-  Game date: {{ question.game_date }}
+  Player: {{ reply.email }}
+  Day: {{ question.game_date }}
   Points: 1
   Reason: unclear_answer_accepted
   Gmail message ID: {{ reply.gmail_message_id }}
@@ -53,7 +53,7 @@ Monthly winner announcement:
 {% for winner in winners -%}
 - {{ winner.email }} with {{ winner.points }} points
 {% else -%}
-- No scored participants this month
+- No scored Players this month
 {% endfor %}
 
 Next scoring day starts a new monthly score bucket automatically.

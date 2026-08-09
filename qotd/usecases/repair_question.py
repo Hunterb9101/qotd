@@ -1,4 +1,4 @@
-"""Repair a rejected generated question without changing its research context."""
+"""Repair a rejected generated QOTD Question without changing its research context."""
 
 from __future__ import annotations
 

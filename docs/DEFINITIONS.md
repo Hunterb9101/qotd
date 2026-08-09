@@ -78,9 +78,9 @@ outcome of a [**Player**](#player)’s response to a [**Game**](#game) or an
 
 #### Scoreboard
 
-The ordered view of each active [**Player**](#player)’s current
-[**Score**](#score) in the current [**Series**](#series), sent alongside each
-[**Question**](#question).
+The ordered view of each [**Player**](#player) with a [**Submission**](#submission)
+or [**Score Event**](#score-event) in the current [**Series**](#series), showing
+their current [**Score**](#score). It is sent alongside each [**Question**](#question).
 
 ### Game Lifecycle
 

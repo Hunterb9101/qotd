@@ -1,4 +1,4 @@
-"""Research, generate, and verify QOTD questions."""
+"""Generate researched and verified QOTD Questions."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ from qotd.external.web_search.core import (
     WebSearchResult,
     is_valid_web_search_result,
 )
-from qotd.usecases.discover_question_topic_from_web import discover_question_topic_from_web
-from qotd.usecases.repair_generated_question import QuestionRepairer
+from qotd.usecases.discover_question_topic import discover_question_topic_from_web
+from qotd.usecases.repair_question import QuestionRepairer
 
 
 DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"

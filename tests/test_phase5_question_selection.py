@@ -5,7 +5,7 @@ from datetime import date
 
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.external.web_search.core import WebSearchResult
-from qotd.usecases.generate_question_for_topic import (
+from qotd.usecases.generate_question import (
     GenerateResearchedQuestionConfig,
     choose_category,
     choose_lens_pairs,

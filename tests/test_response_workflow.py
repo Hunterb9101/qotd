@@ -8,7 +8,7 @@ from qotd.domain.models import StoredQuestion
 from qotd.domain.scoring import AnswerInterpretation
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import GmailAdapter
-from qotd.usecases.score_responses import (
+from qotd.usecases.score_submissions import (
     ScoreResponsesConfig,
     collect_reply_candidates,
     gmail_reply_query,

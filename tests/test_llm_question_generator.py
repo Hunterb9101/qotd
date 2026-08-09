@@ -12,11 +12,11 @@ from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.external.llm.openai import render_prompt
 from qotd.external.web_search.core import WebSearchResult
-from qotd.usecases.discover_question_topic_from_web import (
+from qotd.usecases.discover_question_topic import (
     DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH,
     LLMTopicDiscoverer,
 )
-from qotd.usecases.generate_question_for_topic import (
+from qotd.usecases.generate_question import (
     DEFAULT_EVALUATION_PROMPT_PATH,
     DEFAULT_PROMPT_PATH,
     GenerateQuestionSamplesConfig,
@@ -29,7 +29,7 @@ from qotd.usecases.generate_question_for_topic import (
     choose_lens_pairs,
     generate_question_samples,
 )
-from qotd.usecases.repair_generated_question import (
+from qotd.usecases.repair_question import (
     DEFAULT_REPAIR_PROMPT_PATH,
     RepairGeneratedQuestion,
 )

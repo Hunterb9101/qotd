@@ -235,7 +235,7 @@ class Phase3ScoringTests(unittest.TestCase):
 
         body = build_organizer_update_body(stored_question(), result)
 
-        self.assertIn("Correct answer: B. Jupiter", body)
+        self.assertIn("Answer: B. Jupiter", body)
         self.assertIn("Correct replies:", body)
         self.assertIn("correct@example.com", body)
         self.assertIn("Current standings:", body)

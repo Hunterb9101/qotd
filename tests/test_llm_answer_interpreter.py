@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from qotd.external.llm.openai import render_prompt
-from qotd.usecases.score_responses import DEFAULT_INTERPRET_ANSWER_PROMPT_PATH, LLMAnswerInterpreter
+from qotd.usecases.score_submissions import DEFAULT_INTERPRET_ANSWER_PROMPT_PATH, LLMAnswerInterpreter
 from tests.test_phase3_scoring import stored_question
 
 

@@ -1,4 +1,4 @@
-# For Operators
+# For Organizers
 
 This guide covers production setup and the human workflows used to operate QOTD. Operators interact with QOTD through email and GitHub Actions; no local installation or Python commands are required.
 
@@ -6,13 +6,13 @@ This guide covers production setup and the human workflows used to operate QOTD.
 
 GitHub Actions runs the weekday game on the following schedule:
 
-- 6 AM PDT: participant scoring cutoff
+- 6 AM PDT: Player Submission cutoff
 - 7 AM PDT: scoring summary sent to the organizer
-- 2 PM PDT: trivia question sent to participants
+- 2 PM PDT: Question sent to Players
 
-The management-email workflow runs at `13:55 UTC`, five minutes before the scoring workflow. It processes correct-answer requests first and score-adjustment requests second. Both workflows share a concurrency group so their state writes do not overlap.
+The management-email workflow runs at `13:55 UTC`, five minutes before the scoring workflow. It processes Answer instructions first and the legacy `adjust-score` requests second. Both workflows share a concurrency group so their state writes do not overlap.
 
-## Email and Participants
+## Email and Players
 
 QOTD uses a Gmail account to send questions, collect replies, and receive organizer controls. Automated questions go to a private, invitation-only Google Group rather than directly to a blind-copy recipient list.
 
@@ -23,7 +23,7 @@ Configure the Group so that:
 - conversations and membership are private; and
 - the standard subscription footer is enabled.
 
-Google Group membership is the only participant list. QOTD correlates replies with the applicable question and includes only participants with positive points in current-month standings and non-respondent reporting.
+Google Group membership is the only Player list. QOTD correlates replies with the applicable Question and includes only Players with positive Scores in the current Series Scoreboard and non-respondent reporting.
 
 Use the same Google account to configure Google Cloud Platform.
 
@@ -37,12 +37,20 @@ Enable the Gmail and BigQuery APIs. QOTD needs these OAuth scopes:
 
 - `.../auth/bigquery` for database access
 - `.../auth/gmail.modify` to label manually sent QOTD emails
-- `.../auth/gmail.readonly` to score participant responses
+- `.../auth/gmail.readonly` to collect Player Submissions for scoring
 - `.../auth/gmail.send` to send QOTD email
 
 A service account works only when you control the Google Workspace domain, so other installations should use OAuth access.
 
-QOTD stores previously asked questions, participant scores, and other game state in a BigQuery dataset. Google Cloud requires a billing account for DML SQL commands, although this project's small workload should remain within the free tier.
+QOTD stores Game state in a BigQuery dataset. Google Cloud requires a billing account for DML SQL commands, although this project's small workload should remain within the free tier.
+
+Before enabling canonical workflows, pause the scheduled workflows and provision an existing, reviewed target dataset locally:
+
+```sh
+python -m qotd provision-canonical-state --reset-legacy-state
+```
+
+This operator-only command verifies the configured project and dataset before executing SQL. The reset option drops only the five named legacy QOTD tables, then applies the versioned canonical schema; it never drops the dataset.
 
 ## GitHub Actions
 
@@ -65,7 +73,7 @@ The production workflows live in `.github/workflows`:
 - `qotd-score.yml` scores replies and reports results.
 - `qotd-score-adjustments.yml` processes management email.
 
-## Manual Questions and Correct Answers
+## Manual Questions and Answers
 
 QOTD respects a question sent manually from the configured organizer address. Send the question to the private Google Group with this exact subject:
 
@@ -79,48 +87,48 @@ For example, the subject for July 8, 2026 is:
 QOTD - 07-08-26
 ```
 
-The subject is case-sensitive and must not contain any extra text. Use the email body for the question and answer choices that participants should receive.
+The subject is case-sensitive and must not contain any extra text. Use the email body for the Question and its four options that Players should receive.
 
-Before the manual question is scored, send a plain-text correct-answer email from an approved organizer address to the QOTD admin mailbox. The answer email has no required subject; `QOTD Correct Answer - 07-08-26` is a useful convention. Its body must follow this format:
+Before the manual Question is scored, send a plain-text Organizer Instruction from an approved Organizer address to the QOTD admin mailbox. The email has no required subject; `QOTD Answer - 07-08-26` is a useful convention. Its body must follow this format:
 
 ```text
-Action: set-correct-answer
-Game date: 2026-07-08
+Action: set-answer
+Day: 2026-07-08
 Correct option: C
 Source URL: https://example.com/source-for-answer
 ```
 
-The management job finds unread emails containing `Action: set-correct-answer` and validates the organizer sender, stored question date, option, source URL, and idempotency key. If a manual question has no correct answer, scoring skips that game date and emails the expected template to the organizer.
+The management job finds unread emails containing `Action: set-answer` and validates the Organizer sender, Game Day, Answer option, source URL, and idempotency identity. If a manual Game has no Answer, scoring skips that Day and emails the expected template to the Organizer.
 
 The scheduled `Process QOTD Score Adjustments` workflow processes the email before scoring. To process it immediately, open that workflow in the repository's **Actions** tab and choose **Run workflow**.
 
-## Score Adjustments by Email
+## Legacy `adjust-score` Email
 
-To correct a score, send a new plain-text email from an approved organizer address to the QOTD Gmail account configured in `QOTD_SENDER`. If the organizer address and QOTD account are the same, send the email to that account itself.
+The current `adjust-score` workflow is a legacy path that will be replaced by an Organizer Instruction creating a manual Score Event. Until that cutover, send a new plain-text email from an approved Organizer address to the QOTD Gmail account configured in `QOTD_SENDER`. If the Organizer address and QOTD account are the same, send the email to that account itself.
 
 The subject is not enforced. A useful subject is:
 
 ```text
-QOTD Score Adjustment - 2026-07-08
+QOTD adjust-score - 2026-07-08
 ```
 
 For example, this request adds one point to `person@example.com` for the July 8 question:
 
 ```text
 Action: adjust-score
-Participant: person@example.com
+Player: person@example.com
 Game date: 2026-07-08
 Points: 1
 Reason: unclear answer accepted
 ```
 
-`Points` is the change to the participant's score, not the desired total. Use a positive integer such as `1` to add points or a negative integer such as `-1` to remove them. `Reason` can be a short plain-language explanation.
+`Points` is the change to the Player's Score, not the desired total. Use a positive integer such as `1` to add points or a negative integer such as `-1` to remove them. `Reason` can be a short plain-language explanation.
 
 Use `Game date` when the correction is tied to a particular question. For a correction that applies to the month generally, use `Month` instead:
 
 ```text
 Action: adjust-score
-Participant: person@example.com
+Player: person@example.com
 Month: 2026-07
 Points: -1
 Reason: duplicate correction
@@ -132,13 +140,13 @@ After sending the request:
 
 1. Leave the email unread.
 2. Wait for the scheduled **Process QOTD Score Adjustments** workflow, or open it in the repository's **Actions** tab and choose **Run workflow** to process the request immediately.
-3. Check the response email with the subject `QOTD score adjustment result`. It confirms the updated score and standings or explains why the request was rejected.
+3. Check the response email with the subject `QOTD score adjustment result`. It confirms the updated Score and Scoreboard or explains why the request was rejected.
 
 After processing a request, QOTD marks it as read so it will not be handled again.
 
 ## Manual Scoring Reruns
 
-To rerun scoring for a specific game date:
+To rerun scoring for a specific Day:
 
 1. Open the repository's **Actions** tab.
 2. Select **Score QOTD Responses**.

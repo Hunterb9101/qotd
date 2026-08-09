@@ -107,11 +107,28 @@ The original Organizer Instruction body is not retained.
 | `reason` | `STRING NULL` | Required for manual events. |
 | `created_at` | `TIMESTAMP` | Event creation time. |
 
+### `outbound_messages`
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `STRING` | UUID primary identifier. |
+| `idempotency_key` | `STRING` | Unique retry safeguard. |
+| `message_type` | `STRING` | Question publication, Organizer update, or Organizer Instruction outcome. |
+| `game_id` | `STRING NULL` | References `games.id` when applicable. |
+| `organizer_instruction_id` | `STRING NULL` | References its source when applicable. |
+| `recipient` | `STRING` | Delivery address. |
+| `subject` | `STRING` | Outbound email subject. |
+| `body_text` | `STRING` | Exact rendered outbound email body. |
+| `status` | `STRING` | `pending` or `sent`. |
+| `source_message_key` | `STRING NULL` | One-way hash of Gmail message ID after send. |
+| `created_at` | `TIMESTAMP` | Intent creation time. |
+| `sent_at` | `TIMESTAMP NULL` | Confirmed send time. |
+
 ### `scoreboard` view
 
 `scoreboard` is a standard BigQuery view, not a write table. For each Series,
-it derives active Players from Submissions, left-joins Score Events, sums
-`points_delta`, and orders the resulting Scores.
+it derives Players from Submissions and Score Events, left-joins Score Events,
+sums `points_delta`, and orders the resulting Scores.
 
 ## Invariants and Write Rules
 
@@ -124,6 +141,7 @@ it derives active Players from Submissions, left-joins Score Events, sums
   Submissions.
 - Source-message hashes are retained only for idempotency; Organizer-facing
   diagnostics use sender, subject, Gmail received time, action, and outcome.
+- Every external email has one `outbound_messages` intent before it is sent.
 - BigQuery constraints are not the correctness boundary. The DML transactions
   required by ADR-003 must validate and enforce these rules.
 

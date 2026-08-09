@@ -1,4 +1,4 @@
-"""Discover a question topic with web-backed topic research."""
+"""Discover a QOTD Question topic with web-backed research."""
 
 from __future__ import annotations
 

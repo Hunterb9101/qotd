@@ -42,5 +42,6 @@ or alternative designs. Those decisions require their own ADRs.
   Organizer Instruction that may set an Answer.
 - Existing code and documentation may retain legacy terms until the relevant
   sections are changed, but new work must not introduce them.
-- Follow-on ADRs will decide the operational database, late-Submission
-  collection strategy, rescore policy, and outbound-message auditing.
+- ADR-003 through ADR-006 decide the operational database, canonical state,
+  outbound-message reconciliation, and late-Submission collection. Rescore
+  policy requires a later ADR.

@@ -44,7 +44,7 @@ On weekdays:
 
 ### 4.2 Noon question send
 
-At 12:00 PM Mountain on weekdays, the send-question workflow must:
+At 12:00 PM Mountain on weekdays, the publish-question workflow must:
 
 1. Calculate the participant subject using the shared subject builder: `QOTD - MM-DD-YY`, where the date is the current Mountain-time game date.
 2. Search sent mail for an exact subject match for that game date.

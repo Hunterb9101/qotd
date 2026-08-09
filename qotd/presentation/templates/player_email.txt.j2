@@ -1,7 +1,7 @@
 {% if previous_question -%}
 {% if previous_question.source_note %} {{ previous_question.source_note }}
 {% endif %}
-The correct answer on {{ previous_question.game_date }} is {{ previous_question.correct_option }}. {{ previous_question.options[previous_question.correct_option] }}
+The Answer on {{ previous_question.game_date }} is {{ previous_question.correct_option }}. {{ previous_question.options[previous_question.correct_option] }}
 
 Points earned:
 {% for email in point_earners -%}
@@ -11,23 +11,23 @@ Points earned:
 {% endfor %}
 
 {% if is_month_end_recap -%}
-Final standings for {{ previous_question.game_date[:7] }}:
+Final Scoreboard for {{ previous_question.game_date[:7] }}:
 {% for score in standings -%}
 {{ loop.index }}. {{ score.email }} — {{ score.points }}
 {% else -%}
 - None
 {% endfor %}
 
-Monthly winners:
+Winners:
 {% for winner in monthly_winners -%}
 - {{ winner.email }} with {{ winner.points }} points
 {% else -%}
-- No scored participants this month
+- No scored Players this month
 {% endfor %}
 
-A new monthly competition starts today with clean standings.
+A new Series starts today with a zeroed Scoreboard.
 {% else -%}
-Current standings:
+Current Scoreboard:
 {% for score in standings -%}
 {{ loop.index }}. {{ score.email }} — {{ score.points }}
 {% else -%}

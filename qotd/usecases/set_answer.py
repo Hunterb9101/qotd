@@ -1,4 +1,4 @@
-"""Manual correct-answer update workflow."""
+"""Organizer Answer-instruction workflow."""
 
 from __future__ import annotations
 
@@ -9,34 +9,39 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from qotd.domain.contacts import normalize_email_addresses
-from qotd.domain.models import CorrectAnswerUpdate, OPTION_LABELS
+from qotd.domain.models import OPTION_LABELS
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import mark_gmail_message_read, search_messages, send_gmail_message
-from qotd.external.storage.core import StorageClient
+from qotd.external.storage.canonical import CanonicalState
 from qotd.presentation.emails import build_organizer_email
+from qotd.usecases.handle_answer import apply_answer_instruction
+from qotd.usecases.parse_organizer_instruction import parse_organizer_instruction_payload
+
+
+ANSWER_INSTRUCTION_QUERY = 'is:unread {"Action: set-answer" "Action: set-correct-answer"}'
 
 
 @dataclass(frozen=True)
-class ParsedCorrectAnswerRequest:
-    """Structured correct-answer update parsed from an organizer email."""
+class ParsedSetAnswerRequest:
+    """Structured Answer instruction parsed from an Organizer email."""
 
-    game_date: date
+    day: date
     correct_option: str
     source_url: str
     idempotency_key: str | None = None
 
 
 @dataclass(frozen=True)
-class CorrectAnswerResult:
-    """Result of applying one correct-answer update."""
+class SetAnswerResult:
+    """Result of applying one Answer instruction."""
 
-    update: CorrectAnswerUpdate
+    update: ParsedSetAnswerRequest
     applied: bool
 
 
 @dataclass(frozen=True)
-class ProcessCorrectAnswerEmailsConfig:
-    """Configuration for processing correct-answer emails."""
+class ProcessSetAnswerEmailsConfig:
+    """Configuration for processing Organizer Answer emails."""
 
     sender: str
     gmail_user: str
@@ -44,46 +49,41 @@ class ProcessCorrectAnswerEmailsConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StorageClient
-    query: str = 'is:unread "Action: set-correct-answer"'
+    state_store: object
+    query: str = ANSWER_INSTRUCTION_QUERY
     max_results: int = 25
     dry_run: bool = False
 
 
 @dataclass(frozen=True)
-class CorrectAnswerEmailProcessingResult:
-    """Result for one correct-answer request email."""
+class SetAnswerEmailProcessingResult:
+    """Result for one Organizer Answer request email."""
 
     message_id: str
     sender_email: str
     accepted: bool
     response_message_id: str
     status: str
-    update_result: CorrectAnswerResult | None = None
+    update_result: SetAnswerResult | None = None
 
 
 @dataclass(frozen=True)
-class ProcessCorrectAnswerEmailsResult:
-    """Summary of a correct-answer processing run."""
+class ProcessSetAnswerEmailsResult:
+    """Summary of an Answer-instruction processing run."""
 
     searched_query: str
-    processed: tuple[CorrectAnswerEmailProcessingResult, ...]
+    processed: tuple[SetAnswerEmailProcessingResult, ...]
 
 
-def parse_correct_answer_email(body_text: str) -> ParsedCorrectAnswerRequest:
-    """Parse a plain-text correct-answer update email."""
+def parse_set_answer_email(body_text: str) -> ParsedSetAnswerRequest:
+    """Parse a plain-text Answer instruction email."""
 
-    fields: dict[str, str] = {}
-    for raw_line in body_text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        fields[key.strip().lower()] = value.strip()
-
-    if fields.get("action", "").casefold() != "set-correct-answer":
-        raise ValueError("Action must be set-correct-answer")
-    if not fields.get("game date"):
-        raise ValueError("Game date is required")
+    payload = parse_organizer_instruction_payload(body_text)
+    fields = payload.fields
+    if payload.action != "set-answer":
+        raise ValueError("Action must be set-answer")
+    if not fields.get("day"):
+        raise ValueError("Day is required")
     if not fields.get("correct option"):
         raise ValueError("Correct option is required")
     if not fields.get("source url"):
@@ -96,59 +96,30 @@ def parse_correct_answer_email(body_text: str) -> ParsedCorrectAnswerRequest:
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("Source URL must be a valid http or https URL")
 
-    return ParsedCorrectAnswerRequest(
-        game_date=date.fromisoformat(fields["game date"]),
+    return ParsedSetAnswerRequest(
+        day=date.fromisoformat(fields["day"]),
         correct_option=correct_option,
         source_url=fields["source url"],
         idempotency_key=fields.get("idempotency key") or None,
     )
 
 
-def apply_correct_answer_update(
-    *,
-    request: ParsedCorrectAnswerRequest,
-    source_gmail_message_id: str,
-    state_store: StorageClient,
-    dry_run: bool = False,
-) -> CorrectAnswerResult:
-    """Append one correct-answer update if it has not already been applied."""
-
-    game_date_text = request.game_date.isoformat()
-    if not any(record.get("game_date") == game_date_text for record in state_store.read_question_records()):
-        raise ValueError(f"no stored question exists for {game_date_text}")
-
-    idempotency_key = request.idempotency_key or f"correct-answer:{game_date_text}:{request.correct_option}"
-    update = CorrectAnswerUpdate(
-        game_date=game_date_text,
-        correct_option=request.correct_option,
-        source_url=request.source_url,
-        source_gmail_message_id=source_gmail_message_id,
-        idempotency_key=idempotency_key,
-        created_at=datetime.now(UTC).isoformat(),
-    )
-    if any(record.get("idempotency_key") == idempotency_key for record in state_store.read_correct_answer_updates()):
-        return CorrectAnswerResult(update=update, applied=False)
-    if not dry_run:
-        state_store.append_correct_answer_update(update)
-    return CorrectAnswerResult(update=update, applied=True)
-
-
-def correct_answer_response_body(
+def set_answer_response_body(
     *,
     request_message: ParsedEmailMessage,
-    result: CorrectAnswerResult | None,
+    result: SetAnswerResult | None,
     error: str | None = None,
 ) -> str:
-    """Build a correct-answer confirmation or rejection body."""
+    """Build an Answer confirmation or rejection body."""
 
     if error is not None:
         return (
-            "Correct answer request rejected.\n\n"
+            "Answer instruction rejected.\n\n"
             f"Message: {request_message.message_id}\n"
             f"Reason: {error}\n\n"
             "Expected template:\n"
-            "Action: set-correct-answer\n"
-            "Game date: 2026-07-08\n"
+            "Action: set-answer\n"
+            "Day: 2026-07-08\n"
             "Correct option: C\n"
             "Source URL: https://example.com/source-for-answer\n"
         )
@@ -156,23 +127,26 @@ def correct_answer_response_body(
         raise ValueError("result is required when error is not provided")
     status = "Skipped duplicate" if not result.applied else "Applied"
     return (
-        f"{status} correct answer update.\n\n"
-        f"Game date: {result.update.game_date}\n"
+        f"{status} Answer instruction.\n\n"
+        f"Day: {result.update.day.isoformat()}\n"
         f"Correct option: {result.update.correct_option}\n"
         f"Source URL: {result.update.source_url}\n"
-        f"Idempotency key: {result.update.idempotency_key}\n"
+        f"Idempotency key: {result.update.idempotency_key or 'Gmail message identity'}\n"
     )
 
 
-def process_correct_answer_emails(
-    config: ProcessCorrectAnswerEmailsConfig,
+def process_set_answer_emails(
+    config: ProcessSetAnswerEmailsConfig,
     *,
     fetch_messages: Callable[[str], list[ParsedEmailMessage]] | None = None,
     send_message: Callable[[EmailMessage], str] | None = None,
     mark_message_handled: Callable[[str], None] | None = None,
-) -> ProcessCorrectAnswerEmailsResult:
-    """Process correct-answer request emails from approved organizers."""
+) -> ProcessSetAnswerEmailsResult:
+    """Process Organizer Answer instructions from approved Organizers."""
 
+    if not isinstance(config.state_store, CanonicalState):
+        raise TypeError("canonical Game state is required")
+    state = config.state_store
     approved_senders = set(normalize_email_addresses(config.organizer_emails))
     if not approved_senders:
         raise ValueError("at least one organizer email is required")
@@ -206,38 +180,44 @@ def process_correct_answer_emails(
         )
     )
 
-    processed: list[CorrectAnswerEmailProcessingResult] = []
+    processed: list[SetAnswerEmailProcessingResult] = []
     for message in fetch(config.query):
         normalized_sender = normalize_email_addresses([message.sender_email])
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
-        update_result: CorrectAnswerResult | None = None
+        update_result: SetAnswerResult | None = None
         error: str | None = None
         if sender_email not in approved_senders:
             error = f"sender is not approved: {sender_email}"
         else:
             try:
-                request = parse_correct_answer_email(message.body_text)
-                update_result = apply_correct_answer_update(
-                    request=request,
-                    source_gmail_message_id=message.message_id,
-                    state_store=config.state_store,
-                    dry_run=config.dry_run,
+                canonical_result = apply_answer_instruction(
+                    state=state,
+                    message=message,
+                    processed_at=datetime.now(UTC),
                 )
+                if canonical_result.instruction.status == "rejected":
+                    error = canonical_result.instruction.rejection_reason or "Organizer Instruction rejected"
+                else:
+                    request = parse_set_answer_email(message.body_text)
+                    update_result = SetAnswerResult(
+                        update=request,
+                        applied=canonical_result.instruction.status == "applied",
+                    )
             except ValueError as exc:
                 error = str(exc)
 
         response = build_organizer_email(
             sender=config.sender,
             organizer=sender_email,
-            subject="QOTD correct answer update result",
-            body=correct_answer_response_body(request_message=message, result=update_result, error=error),
+            subject="QOTD Answer instruction result",
+            body=set_answer_response_body(request_message=message, result=update_result, error=error),
         )
         response_message_id = f"dry-run:{message.message_id}"
         if not config.dry_run:
             response_message_id = send(response)
             mark_handled(message.message_id)
         processed.append(
-            CorrectAnswerEmailProcessingResult(
+            SetAnswerEmailProcessingResult(
                 message_id=message.message_id,
                 sender_email=sender_email,
                 accepted=error is None,
@@ -247,4 +227,4 @@ def process_correct_answer_emails(
             )
         )
 
-    return ProcessCorrectAnswerEmailsResult(searched_query=config.query, processed=tuple(processed))
+    return ProcessSetAnswerEmailsResult(searched_query=config.query, processed=tuple(processed))

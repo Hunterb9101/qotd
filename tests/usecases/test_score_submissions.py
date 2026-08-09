@@ -10,7 +10,7 @@ import pytest
 
 from qotd.domain.models import StoredQuestion
 from qotd.external.llm.openai import build_openai_llm_client
-from qotd.usecases.score_responses import LLMAnswerInterpreter
+from qotd.usecases.score_submissions import LLMAnswerInterpreter
 
 
 CASES_PATH = Path(__file__).with_name("answer_interpretation_cases.json")
@@ -29,7 +29,7 @@ def _api_key() -> str:
 
 @pytest.mark.intg
 @pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
-def test_live_answer_interpretation(case: dict[str, object]) -> None:
+def test_score_submissions_live_answer_interpretation(case: dict[str, object]) -> None:
     question = StoredQuestion(
         game_date="2026-07-11",
         prompt="Which planet has the Great Red Spot?",

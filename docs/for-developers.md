@@ -33,7 +33,7 @@ export OPENAI_API_KEY="..."
 
 Scoring uses OpenAI to interpret freeform replies that are not a plain `A`, `B`, `C`, or `D`. Set `OPENAI_INTERPRETER_MODEL` to override the default model. Pass `--disable-ai-answer-interpreter` when you need deterministic-only local scoring.
 
-See the [operator guide](for-operators.md) for production account, OAuth, and GitHub Actions setup.
+See the [Organizer guide](for-organizers.md) for production account, OAuth, and GitHub Actions setup.
 
 ## Generate Sample Questions
 
@@ -55,7 +55,7 @@ Run the offline test suite with:
 pytest tests/
 ```
 
-Live answer-interpreter evaluations are in `tests/usecases/test_score_responses.py`. They use the `intg` pytest marker and run only when explicitly selected:
+Live Answer-interpreter evaluations are in `tests/usecases/test_score_submissions.py`. They use the `intg` pytest marker and run only when explicitly selected:
 
 ```bash
 OPENAI_API_KEY="..." pytest -m intg

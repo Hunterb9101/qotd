@@ -4,19 +4,34 @@ from __future__ import annotations
 
 import importlib
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
 from qotd.external.auth.gcp import build_oauth_credentials
+from qotd.domain.canonical import (
+    Game,
+    INSTRUCTION_DUPLICATE,
+    OrganizerInstruction,
+    OutboundMessage,
+    Player,
+    ScoreEvent,
+    ScoreboardEntry,
+    Series,
+    Submission,
+    new_id,
+)
 from qotd.external.storage.core import StorageClient
+from qotd.external.storage.canonical import CanonicalState
 from qotd.domain.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 
 
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
+MAX_TRANSACTION_ATTEMPTS = 3
 
 
-class BQAdapter(StorageClient):
-    """BigQuery-backed append-only QOTD state store."""
+class BQAdapter(StorageClient, CanonicalState):
+    """BigQuery-backed QOTD state store during the canonical cutover."""
 
     def __init__(self, *, project_id: str, dataset: str, client: Any) -> None:
         self.project_id = project_id
@@ -72,6 +87,289 @@ class BQAdapter(StorageClient):
         bigquery = importlib.import_module("google.cloud.bigquery")
         job_config = bigquery.QueryJobConfig(query_parameters=parameters or [])
         return [dict(row.items()) for row in self.client.query(query, job_config=job_config).result()]
+
+    def transaction_rows(self, statement: str, parameters: list[Any]) -> list[dict[str, Any]]:
+        """Run parameterized GoogleSQL DML in a bounded-retry transaction."""
+
+        bigquery = importlib.import_module("google.cloud.bigquery")
+        script = f"BEGIN TRANSACTION;\n{statement}\nCOMMIT TRANSACTION;"
+        job_config = bigquery.QueryJobConfig(query_parameters=parameters)
+        for attempt in range(MAX_TRANSACTION_ATTEMPTS):
+            try:
+                return [dict(row.items()) for row in self.client.query(script, job_config=job_config).result()]
+            except Exception as exc:
+                if not self._is_transaction_conflict(exc) or attempt == MAX_TRANSACTION_ATTEMPTS - 1:
+                    raise RuntimeError("BigQuery canonical-state transaction failed") from exc
+        raise AssertionError("unreachable")
+
+    @staticmethod
+    def _is_transaction_conflict(error: Exception) -> bool:
+        """Identify BigQuery's retryable concurrent-transaction failures."""
+
+        message = str(error).lower()
+        return "concurrent update" in message or "transaction" in message and "cancel" in message
+
+    def _parameters(self, values: dict[str, Any]) -> list[Any]:
+        """Build typed BigQuery parameters without interpolating input values."""
+
+        bigquery = importlib.import_module("google.cloud.bigquery")
+        parameters: list[Any] = []
+        for name, value in values.items():
+            if isinstance(value, dict):
+                value = json.dumps(value)
+                parameter_type = "STRING"
+            elif isinstance(value, bool):
+                parameter_type = "BOOL"
+            elif isinstance(value, int):
+                parameter_type = "INT64"
+            elif hasattr(value, "isoformat") and value.__class__.__name__ == "date":
+                parameter_type = "DATE"
+            elif isinstance(value, datetime):
+                parameter_type = "TIMESTAMP"
+            else:
+                parameter_type = "STRING"
+            parameters.append(bigquery.ScalarQueryParameter(name, parameter_type, value))
+        return parameters
+
+    def _merge_record(self, *, table_name: str, key: str, values: dict[str, Any]) -> list[dict[str, Any]]:
+        """Idempotently insert one canonical record and return its stored row."""
+
+        fields = tuple(values)
+        field_list = ", ".join(fields)
+        source_fields = ", ".join(
+            f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
+            for field in fields
+        )
+        value_list = ", ".join(f"source.{field}" for field in fields)
+        statement = f"""
+            MERGE `{self.table(table_name)}` AS target
+            USING (SELECT {source_fields}) AS source
+            ON target.{key} = source.{key}
+            WHEN NOT MATCHED THEN
+              INSERT ({field_list}) VALUES ({value_list});
+            SELECT {field_list} FROM `{self.table(table_name)}` WHERE {key} = @{key};
+        """
+        return self.transaction_rows(statement, self._parameters(values))
+
+    def create_or_find_player(self, *, email: str) -> Player:
+        """Create or look up a Player by normalized email."""
+
+        normalized = email.strip().lower()
+        rows = self._merge_record(
+            table_name="players", key="email", values={"id": new_id(), "email": normalized, "nickname": None}
+        )
+        row = rows[0]
+        return Player(id=str(row["id"]), email=str(row["email"]), nickname=row.get("nickname"))
+
+    def create_or_find_series(self, *, name: str, starts_on: Any, ends_on: Any) -> Series:
+        """Create or look up a Series by name."""
+
+        now = datetime.now(UTC)
+        rows = self._merge_record(
+            table_name="series", key="name",
+            values={"id": new_id(), "name": name, "starts_on": starts_on, "ends_on": ends_on,
+                    "created_at": now, "updated_at": now},
+        )
+        row = rows[0]
+        return Series(**row)
+
+    def record_organizer_instruction(self, instruction: OrganizerInstruction) -> OrganizerInstruction:
+        rows = self._merge_record(
+            table_name="organizer_instructions", key="source_message_key", values=asdict(instruction)
+        )
+        if rows and str(rows[0]["id"]) != instruction.id:
+            return OrganizerInstruction(**{**rows[0], "status": INSTRUCTION_DUPLICATE})
+        return OrganizerInstruction(**rows[0]) if rows else instruction
+
+    def record_submission(self, submission: Submission) -> Submission:
+        self._merge_record(table_name="submissions", key="source_message_key", values=asdict(submission))
+        return submission
+
+    def find_game(self, *, day: Any) -> Game | None:
+        """Return the Game for a Day, if one has been published or is pending."""
+
+        rows = self.query_rows(
+            f"SELECT * FROM `{self.table('games')}` WHERE day = @day LIMIT 1",
+            self._parameters({"day": day}),
+        )
+        return Game(**rows[0]) if rows else None
+
+    def find_latest_answered_game_before(self, *, day: Any) -> Game | None:
+        rows = self.query_rows(
+            f"""SELECT * FROM `{self.table('games')}`
+            WHERE day < @day AND correct_option IS NOT NULL
+            ORDER BY day DESC LIMIT 1""",
+            self._parameters({"day": day}),
+        )
+        return Game(**rows[0]) if rows else None
+
+    def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
+        values = asdict(game)
+        fields = tuple(values)
+        source_fields = ", ".join(
+            f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
+            for field in fields
+        )
+        insert_values = ", ".join(f"source.{field}" for field in fields)
+        updates = ", ".join(
+            "target.status = 'published'"
+            if field == "status"
+            else f"target.{field} = COALESCE(target.{field}, source.{field})"
+            if field in {"correct_option", "answer_source_url", "answer_source_note", "answer_instruction_id"}
+            else f"target.{field} = source.{field}"
+            for field in fields
+            if field not in {"id", "series_id", "day", "created_at"}
+        )
+        statement = f"""
+            MERGE `{self.table("games")}` AS target
+            USING (SELECT {source_fields}) AS source
+            ON target.day = source.day
+            WHEN NOT MATCHED THEN INSERT ({", ".join(fields)}) VALUES ({insert_values})
+            WHEN MATCHED AND target.status = 'pending' THEN UPDATE SET {updates};
+        """
+        if outbound_message is not None:
+            outbound = {f"outbound_{key}": value for key, value in asdict(outbound_message).items()}
+            outbound_fields = tuple(asdict(outbound_message))
+            statement += f"""
+                INSERT INTO `{self.table('outbound_messages')}` ({", ".join(outbound_fields)})
+                SELECT {", ".join(f"@outbound_{field}" for field in outbound_fields)}
+                WHERE NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
+            """
+            values.update(outbound)
+        statement += f"SELECT * FROM `{self.table('games')}` WHERE day = @day;"
+        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=game)
+
+    def set_answer(self, game: Game) -> Game:
+        values = asdict(game)
+        fields = tuple(values)
+        source_fields = ", ".join(
+            f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
+            for field in fields
+        )
+        insert_values = ", ".join(f"source.{field}" for field in fields)
+        statement = f"""
+            MERGE `{self.table("games")}` AS target
+            USING (SELECT {source_fields}) AS source
+            ON target.day = source.day
+            WHEN NOT MATCHED THEN INSERT ({", ".join(fields)}) VALUES ({insert_values})
+            WHEN MATCHED AND target.correct_option IS NULL THEN UPDATE SET
+              correct_option = source.correct_option,
+              answer_source_url = source.answer_source_url,
+              answer_source_note = source.answer_source_note,
+              answer_instruction_id = source.answer_instruction_id,
+              updated_at = source.updated_at;
+            ASSERT EXISTS (
+              SELECT 1 FROM `{self.table("games")}` WHERE day = @day AND correct_option = @correct_option
+            ) AS 'Game Answer is missing or conflicts with the existing Answer';
+        """
+        rows = self.transaction_rows(
+            statement + f"SELECT * FROM `{self.table('games')}` WHERE day = @day;", self._parameters(values)
+        )
+        return self._game_from_rows(rows, fallback=game)
+
+    def discard_pending_game(self, *, day: Any) -> None:
+        statement = f"DELETE FROM `{self.table('games')}` WHERE day = @day AND status = 'pending';"
+        self.transaction_rows(statement, self._parameters({"day": day}))
+
+    def replace_pending_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
+        values = asdict(game)
+        fields = ", ".join(values)
+        source_fields = ", ".join(
+            f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
+            for field in values
+        )
+        statement = f"""
+            DELETE FROM `{self.table('games')}` WHERE day = @day AND status = 'pending';
+            INSERT INTO `{self.table('games')}` ({fields}) SELECT {", ".join(f"source.{field}" for field in values)}
+            FROM (SELECT {source_fields}) AS source
+            WHERE NOT EXISTS (SELECT 1 FROM `{self.table('games')}` WHERE day = @day);
+        """
+        if outbound_message is not None:
+            outbound = {f"outbound_{key}": value for key, value in asdict(outbound_message).items()}
+            outbound_fields = tuple(asdict(outbound_message))
+            statement += f"""
+                INSERT INTO `{self.table('outbound_messages')}` ({", ".join(outbound_fields)})
+                SELECT {", ".join(f"@outbound_{field}" for field in outbound_fields)}
+                WHERE NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
+            """
+            values.update(outbound)
+        statement += f"SELECT * FROM `{self.table('games')}` WHERE day = @day;"
+        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=game)
+
+    def score_game(
+        self,
+        game: Game,
+        *,
+        score_events: tuple[ScoreEvent, ...] = (),
+        outbound_messages: tuple[OutboundMessage, ...] = (),
+    ) -> Game:
+        statements = [f"""
+            DECLARE transitioned BOOL DEFAULT FALSE;
+            UPDATE `{self.table("games")}`
+            SET status = 'scored', scored_at = @scored_at, updated_at = @updated_at
+            WHERE id = @id AND status = 'published' AND correct_option IS NOT NULL;
+            SET transitioned = @@row_count = 1;
+            ASSERT transitioned OR EXISTS (
+              SELECT 1 FROM `{self.table("games")}` WHERE id = @id AND status = 'scored'
+            ) AS 'Game cannot be scored before publication and an Answer';
+        """]
+        parameters = asdict(game)
+        for index, event in enumerate(score_events):
+            event_values = {f"event_{index}_{key}": value for key, value in asdict(event).items()}
+            fields = tuple(asdict(event))
+            statements.append(
+                f"""INSERT INTO `{self.table("score_events")}` ({", ".join(fields)})
+                SELECT {", ".join(f"@event_{index}_{field}" for field in fields)} WHERE transitioned;"""
+            )
+            parameters.update(event_values)
+        for index, message in enumerate(outbound_messages):
+            message_values = {f"outbound_{index}_{key}": value for key, value in asdict(message).items()}
+            fields = tuple(asdict(message))
+            statements.append(
+                f"""INSERT INTO `{self.table("outbound_messages")}` ({", ".join(fields)})
+                SELECT {", ".join(f"@outbound_{index}_{field}" for field in fields)} WHERE transitioned;"""
+            )
+            parameters.update(message_values)
+        statements.append(f"SELECT * FROM `{self.table('games')}` WHERE id = @id;")
+        return self._game_from_rows(
+            self.transaction_rows("\n".join(statements), self._parameters(parameters)), fallback=game
+        )
+
+    @staticmethod
+    def _game_from_rows(rows: list[dict[str, Any]], *, fallback: Game) -> Game:
+        """Return the database Game state, with a test-double fallback."""
+
+        return Game(**rows[0]) if rows else fallback
+
+    def record_manual_score_event(self, event: ScoreEvent) -> ScoreEvent:
+        self._merge_record(table_name="score_events", key="idempotency_key", values=asdict(event))
+        return event
+
+    def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage:
+        self._merge_record(table_name="outbound_messages", key="idempotency_key", values=asdict(message))
+        return message
+
+    def reconcile_outbound_message(
+        self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
+    ) -> OutboundMessage:
+        statement = f"""
+            UPDATE `{self.table("outbound_messages")}`
+            SET status = 'sent', source_message_key = @source_message_key, sent_at = @sent_at
+            WHERE idempotency_key = @idempotency_key AND status = 'pending';
+            SELECT * FROM `{self.table("outbound_messages")}` WHERE idempotency_key = @idempotency_key;
+        """
+        rows = self.transaction_rows(
+            statement,
+            self._parameters({"idempotency_key": idempotency_key, "source_message_key": source_message_key, "sent_at": sent_at}),
+        )
+        return OutboundMessage(**rows[0])
+
+    def read_scoreboard(self, *, series_id: str) -> tuple[ScoreboardEntry, ...]:
+        rows = self.query_rows(
+            f"SELECT series_id, player_id, email, score FROM `{self.table('scoreboard')}` WHERE series_id = @series_id",
+            self._parameters({"series_id": series_id}),
+        )
+        return tuple(ScoreboardEntry(**row) for row in rows)
 
     def append_question_record(self, record: StoredQuestion) -> None:
         """Append one question record."""

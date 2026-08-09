@@ -11,18 +11,19 @@ from datetime import date
 from qotd.domain.dates import current_game_date
 from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
-from qotd.usecases.correct_answer import ProcessCorrectAnswerEmailsConfig, process_correct_answer_emails
+from qotd.provision import provision_canonical_state
+from qotd.usecases.set_answer import ANSWER_INSTRUCTION_QUERY, ProcessSetAnswerEmailsConfig, process_set_answer_emails
 from qotd.usecases.adjust_score import (
     ProcessScoreAdjustmentEmailsConfig,
     ScoreAdjustmentConfig,
     apply_score_adjustment,
     process_score_adjustment_emails,
 )
-from qotd.usecases.score_responses import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
+from qotd.usecases.score_submissions import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
 from qotd.usecases.send_question import SendQuestionConfig, send_question
-from qotd.usecases.discover_question_topic_from_web import LLMTopicDiscoverer
-from qotd.usecases.repair_generated_question import RepairGeneratedQuestion
-from qotd.usecases.generate_question_for_topic import (
+from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
+from qotd.usecases.repair_question import RepairGeneratedQuestion
+from qotd.usecases.generate_question import (
     GenerateQuestionSamplesConfig,
     GenerateResearchedQuestionConfig,
     LLMQuestionEvaluator,
@@ -116,22 +117,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="qotd")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    send_parser = subparsers.add_parser("send-question", help="Generate and send today's QOTD email")
-    send_parser.add_argument("--date", type=parse_date, default=current_game_date())
-    send_parser.add_argument("--google-group-email", default=os.environ.get("QOTD_GOOGLE_GROUP_EMAIL", ""))
-    send_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
-    send_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
-    send_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
-    send_parser.add_argument(
+    provision_parser = subparsers.add_parser(
+        "provision-canonical-state",
+        help="Operator-only: apply the canonical BigQuery schema to an existing dataset",
+    )
+    provision_parser.add_argument(
+        "--reset-legacy-state",
+        action="store_true",
+        help="Drop only the five legacy QOTD tables before applying the canonical schema",
+    )
+    add_google_options(provision_parser)
+
+    publish_parser = subparsers.add_parser("publish-question", help="Generate and publish today's QOTD Question")
+    publish_parser.add_argument("--date", type=parse_date, default=current_game_date())
+    publish_parser.add_argument("--google-group-email", default=os.environ.get("QOTD_GOOGLE_GROUP_EMAIL", ""))
+    publish_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    publish_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
+    publish_parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY", ""))
+    publish_parser.add_argument(
         "--openai-generator-model",
         default=os.environ.get("OPENAI_GENERATOR_MODEL", DEFAULT_OPENAI_GENERATOR_MODEL),
     )
-    send_parser.add_argument(
+    publish_parser.add_argument(
         "--openai-web-search-model",
         default=os.environ.get("OPENAI_WEB_SEARCH_MODEL", DEFAULT_OPENAI_WEB_SEARCH_MODEL),
     )
-    add_google_options(send_parser)
-    send_parser.add_argument("--dry-run", action="store_true")
+    add_google_options(publish_parser)
+    publish_parser.add_argument("--dry-run", action="store_true")
 
     samples_parser = subparsers.add_parser(
         "generate-samples",
@@ -185,17 +197,17 @@ def build_parser() -> argparse.ArgumentParser:
     add_google_options(email_adjust_parser)
     email_adjust_parser.add_argument("--dry-run", action="store_true")
 
-    correct_answer_parser = subparsers.add_parser(
-        "process-correct-answers",
-        help="Process manual correct-answer emails",
+    set_answer_parser = subparsers.add_parser(
+        "process-set-answers",
+        help="Process Organizer Answer instructions",
     )
-    correct_answer_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
-    correct_answer_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
-    correct_answer_parser.add_argument("--organizer", action="append", default=[])
-    correct_answer_parser.add_argument("--query", default='is:unread "Action: set-correct-answer"')
-    correct_answer_parser.add_argument("--max-results", type=int, default=25)
-    add_google_options(correct_answer_parser)
-    correct_answer_parser.add_argument("--dry-run", action="store_true")
+    set_answer_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    set_answer_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
+    set_answer_parser.add_argument("--organizer", action="append", default=[])
+    set_answer_parser.add_argument("--query", default=ANSWER_INSTRUCTION_QUERY)
+    set_answer_parser.add_argument("--max-results", type=int, default=25)
+    add_google_options(set_answer_parser)
+    set_answer_parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -205,7 +217,24 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "send-question":
+    if args.command == "provision-canonical-state":
+        require_google_options(args)
+        state_store = build_bigquery_state_store(
+            project_id=args.google_cloud_project,
+            dataset=args.bigquery_dataset,
+            oauth_client_id=args.oauth_client_id,
+            oauth_client_secret=args.oauth_client_secret,
+            oauth_refresh_token=args.oauth_refresh_token,
+        )
+        provision_canonical_state(
+            client=state_store.client,
+            project_id=args.google_cloud_project,
+            dataset=args.bigquery_dataset,
+            reset_legacy_state=args.reset_legacy_state,
+        )
+        print(f"Provisioned canonical QOTD state in {args.google_cloud_project}.{args.bigquery_dataset}")
+
+    elif args.command == "publish-question":
         require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
@@ -388,7 +417,7 @@ def main() -> None:
         for adjustment_item in processing_result.processed:
             print(f"- {adjustment_item.message_id}: {adjustment_item.status} ({adjustment_item.response_message_id})")
 
-    elif args.command == "process-correct-answers":
+    elif args.command == "process-set-answers":
         require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
@@ -399,8 +428,8 @@ def main() -> None:
             oauth_refresh_token=args.oauth_refresh_token,
         )
         organizers = tuple(args.organizer) or (args.sender,)
-        correct_answer_result = process_correct_answer_emails(
-            ProcessCorrectAnswerEmailsConfig(
+        set_answer_result = process_set_answer_emails(
+            ProcessSetAnswerEmailsConfig(
                 sender=args.sender,
                 gmail_user=args.gmail_user,
                 organizer_emails=organizers,
@@ -414,11 +443,11 @@ def main() -> None:
             )
         )
         print(
-            f"Processed {len(correct_answer_result.processed)} correct-answer request emails "
-            f"for query: {correct_answer_result.searched_query}"
+            f"Processed {len(set_answer_result.processed)} Organizer Answer instructions "
+            f"for query: {set_answer_result.searched_query}"
         )
-        for correct_answer_item in correct_answer_result.processed:
+        for set_answer_item in set_answer_result.processed:
             print(
-                f"- {correct_answer_item.message_id}: "
-                f"{correct_answer_item.status} ({correct_answer_item.response_message_id})"
+                f"- {set_answer_item.message_id}: "
+                f"{set_answer_item.status} ({set_answer_item.response_message_id})"
             )

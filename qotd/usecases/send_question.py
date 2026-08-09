@@ -9,18 +9,20 @@ from typing import Callable
 
 from qotd.domain.dates import question_subject
 from qotd.domain.generator import generate_placeholder_question
+from qotd.domain.canonical import Game, OUTBOUND_PENDING, OutboundMessage, gmail_message_key, new_id
 from qotd.domain.models import Question, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import search_messages, send_gmail_message
-from qotd.external.storage.core import StorageClient
-from qotd.presentation.emails import build_participant_email
+from qotd.external.storage.canonical import CanonicalState
+from qotd.presentation.emails import build_player_email
 from qotd.usecases.check_manual_question import MessageFetcher, check_manual_question
-from qotd.usecases.question_history import find_latest_answered_question_before
-from qotd.usecases.score_history import ParticipantResults, load_participant_results
+from qotd.usecases.publish_game import publish_automated_game
+from qotd.usecases.get_question_history import find_latest_answered_question_before, stored_question_from_game
+from qotd.usecases.get_score_history import PlayerResults
 
 
-QuestionGeneratorForDate = Callable[[date, StorageClient], Question]
+QuestionGeneratorForDate = Callable[[date, object], Question]
 LOGGER = logging.getLogger(__name__)
 QUESTION_ALREADY_EXISTS = "question_subject_already_exists"
 
@@ -35,7 +37,7 @@ class SendQuestionConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StorageClient
+    state_store: object
     google_group_email: str = ""
     question_generator: QuestionGeneratorForDate | None = None
     dry_run: bool = False
@@ -62,6 +64,10 @@ def send_question(
 ) -> SendQuestionResult:
     """Generate, send, and persist a QOTD question."""
 
+    if not isinstance(config.state_store, CanonicalState):
+        raise TypeError("canonical Game state is required")
+    state = config.state_store
+
     if fetch_messages is None and not config.dry_run:
         def fetch_messages(gmail_query: str) -> list[ParsedEmailMessage]:
             return search_messages(
@@ -76,58 +82,77 @@ def send_question(
         manual_question = check_manual_question(
             game_date=config.game_date,
             sender=config.sender,
-            state_store=config.state_store,
+            state=state,
             fetch_messages=fetch_messages,
         )
         if manual_question is not None:
             subject = question_subject(config.game_date)
+            record = (
+                stored_question_from_game(manual_question)
+                if isinstance(manual_question, Game)
+                else manual_question
+            )
             LOGGER.info(
                 "job=send_question game_date=%s outcome=skipped "
                 "reason=%s subject=%r gmail_message_id=%s",
                 config.game_date.isoformat(),
                 QUESTION_ALREADY_EXISTS,
                 subject,
-                manual_question.gmail_message_id,
+                record.gmail_message_id,
             )
             return SendQuestionResult(
-                record=manual_question,
-                email_body=manual_question.prompt,
+                record=record,
+                email_body=record.prompt,
                 recipient_count=0,
                 skipped_generated_send=True,
                 outcome="skipped",
                 reason=QUESTION_ALREADY_EXISTS,
                 subject=subject,
-                matched_gmail_message_id=manual_question.gmail_message_id,
+                matched_gmail_message_id=record.gmail_message_id,
             )
 
     google_group_email = config.google_group_email.strip().lower()
     if not config.dry_run and not google_group_email:
-        raise RuntimeError("Google Group email is required for participant delivery")
+        raise RuntimeError("Google Group email is required for Player delivery")
 
     if config.question_generator is None:
         question = generate_placeholder_question(config.game_date.isoformat())
     else:
         question = config.question_generator(config.game_date, config.state_store)
     validate_question(question)
-    previous_question = find_latest_answered_question_before(config.state_store, config.game_date)
-    participant_results = ParticipantResults(point_earners=(), standings=())
-    if previous_question is not None:
-        participant_results = load_participant_results(
-            config.state_store,
-            date.fromisoformat(previous_question.game_date),
-        )
-    email_message = build_participant_email(
+    previous_question = find_latest_answered_question_before(state, config.game_date)
+    player_results = PlayerResults(point_earners=(), standings=())
+    email_message = build_player_email(
         question,
         config.sender,
         delivery_address=google_group_email or None,
-        point_earners=participant_results.point_earners,
+        point_earners=player_results.point_earners,
         previous_question=previous_question,
-        standings=participant_results.standings,
+        standings=player_results.standings,
     )
 
-    if config.dry_run:
-        gmail_message_id = f"dry-run:{config.game_date.isoformat()}"
-    else:
+    published_at = datetime.now(UTC)
+    outbound_message = OutboundMessage(
+        id=new_id(),
+        idempotency_key=f"publication:{config.game_date.isoformat()}",
+        message_type="question_publication",
+        recipient=google_group_email,
+        subject=question_subject(config.game_date),
+        body_text=email_message.get_content(),
+        status=OUTBOUND_PENDING,
+        created_at=published_at,
+    )
+    record = stored_question_from_game(
+        publish_automated_game(
+            state=state,
+            game_day=config.game_date,
+            question=question,
+            message_id=outbound_message.idempotency_key,
+            published_at=published_at,
+            outbound_message=outbound_message,
+        )
+    )
+    if not config.dry_run:
         gmail_message_id = send_gmail_message(
             email_message,
             user_id=config.gmail_user,
@@ -135,13 +160,11 @@ def send_question(
             oauth_client_secret=config.oauth_client_secret,
             oauth_refresh_token=config.oauth_refresh_token,
         )
-
-    record = StoredQuestion.from_question(
-        question=question,
-        gmail_message_id=gmail_message_id,
-        created_at=datetime.now(UTC),
-    )
-    config.state_store.append_question_record(record)
+        state.reconcile_outbound_message(
+            idempotency_key=outbound_message.idempotency_key,
+            source_message_key=gmail_message_key(gmail_message_id),
+            sent_at=datetime.now(UTC),
+        )
     return SendQuestionResult(
         record=record,
         email_body=email_message.get_content(),

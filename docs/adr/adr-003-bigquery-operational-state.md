@@ -38,9 +38,8 @@ GitHub Actions concurrency settings remain a useful optimization, but they are
 not a correctness boundary. The database transition is authoritative when a
 scheduled workflow and a manually dispatched workflow overlap.
 
-The exact table schema, late-Submission collection, rescoring policy, and
-outbound-message reconciliation are separate decisions and require follow-on
-ADRs.
+Late-Submission collection, rescoring policy, and outbound-message
+reconciliation are separate decisions and require follow-on ADRs.
 
 ## Consequences
 

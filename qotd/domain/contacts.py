@@ -1,4 +1,4 @@
-"""Contact normalization helpers for QOTD participants."""
+"""Email normalization helpers for QOTD Players."""
 
 from __future__ import annotations
 
