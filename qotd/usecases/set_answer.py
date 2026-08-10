@@ -14,7 +14,7 @@ from qotd.domain.models import OPTION_LABELS
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.runtime import build_organizer_email, mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
-from qotd.usecases.handle_answer import apply_answer_instruction
+from qotd.usecases.handle_answer import ANSWER_TEMPLATE_SOURCE_URL, apply_answer_instruction
 from qotd.usecases.parse_organizer_instruction import parse_organizer_instruction_payload
 from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
@@ -122,7 +122,7 @@ def set_answer_response_body(
             "Action: set-answer\n"
             "Day: 2026-07-08\n"
             "Correct option: C\n"
-            "Source URL: https://example.com/source-for-answer\n"
+            f"Source URL: {ANSWER_TEMPLATE_SOURCE_URL}\n"
         )
     if result is None:
         raise ValueError("result is required when error is not provided")

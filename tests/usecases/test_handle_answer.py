@@ -105,6 +105,23 @@ def test_malformed_answer_instruction_is_durably_rejected() -> None:
     assert len(state.instructions) == 1
 
 
+def test_answer_instruction_does_not_apply_the_rejection_template_source_url() -> None:
+    state = InMemoryCanonicalState()
+
+    result = apply_answer_instruction(
+        state=state,
+        message=_message(
+            "Action: set-answer\nDay: 2026-08-10\nCorrect option: C\n"
+            "Source URL: https://example.com/source-for-answer"
+        ),
+        processed_at=datetime(2026, 8, 9, tzinfo=UTC),
+    )
+
+    assert result.game is None
+    assert result.instruction.status == "rejected"
+    assert state.games == {}
+
+
 def test_duplicate_answer_instruction_is_an_idempotent_skip() -> None:
     state = InMemoryCanonicalState()
     message = _message(

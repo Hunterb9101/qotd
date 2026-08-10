@@ -16,13 +16,24 @@ from qotd.external.llm.core import LLMClient
 DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "repair_generated_question.md"
 
 
+class RepairedQuestionOptions(BaseModel):
+    """The four labeled answer options returned by the repair call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    A: str
+    B: str
+    C: str
+    D: str
+
+
 class RepairedQuestionOutput(BaseModel):
     """Structured question fields returned by the repair call."""
 
     model_config = ConfigDict(extra="forbid")
 
     prompt: str
-    options: dict[Literal["A", "B", "C", "D"], str]
+    options: RepairedQuestionOptions
     correct_option: Literal["A", "B", "C", "D"]
     source_note: str
 
@@ -83,7 +94,7 @@ class RepairGeneratedQuestion:
             max_output_tokens=self.max_output_tokens,
         )
         options, correct_option = shuffle_answer_options(
-            {str(label): value for label, value in data.options.items()}, data.correct_option
+            data.options.model_dump(), data.correct_option
         )
         return GeneratedQuestionCandidate(
             question=Question(

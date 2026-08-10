@@ -26,6 +26,9 @@ from qotd.external.storage.canonical import CanonicalState
 from qotd.usecases.parse_organizer_instruction import OrganizerInstructionPayload, parse_organizer_instruction_payload
 
 
+ANSWER_TEMPLATE_SOURCE_URL = "https://example.com/source-for-answer"
+
+
 @dataclass(frozen=True)
 class AnswerInstructionResult:
     """The Organizer Instruction and Game produced by an Answer request."""
@@ -99,6 +102,8 @@ def _apply_validated_answer_instruction(
     parsed_url = urlparse(source_url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("Source URL must be a valid http or https URL")
+    if source_url == ANSWER_TEMPLATE_SOURCE_URL:
+        raise ValueError("Source URL must replace the Answer instruction template value")
 
     days_in_month = calendar.monthrange(game_day.year, game_day.month)[1]
     series = Series(
@@ -191,7 +196,7 @@ def _rejection_body(*, message: ParsedEmailMessage, reason: str) -> str:
         "Answer instruction rejected.\n\n"
         f"Message: {message.message_id}\nReason: {reason}\n\n"
         "Expected template:\nAction: set-answer\nDay: 2026-07-08\n"
-        "Correct option: C\nSource URL: https://example.com/source-for-answer\n"
+        f"Correct option: C\nSource URL: {ANSWER_TEMPLATE_SOURCE_URL}\n"
     )
 
 
