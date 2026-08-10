@@ -30,7 +30,6 @@ conflicts with either source, the Definitions and ADR-004 take precedence.
 ## 4. Non-Goals
 - 4.1 The MVP will not include a web application, admin UI, or Player self-service interface.
 - 4.2 The MVP will not require organizer approval or review before generated questions are sent when no organizer-sent QOTD email has already been detected that day.
-- 4.3 The MVP will not support weekend QOTD games.
 - 4.4 The MVP will not include tie-breaker rounds or special handling for tied monthly winners.
 - 4.5 The MVP will not include Player lifecycle management beyond managing private Google Group membership.
 - 4.6 The MVP will not attempt to replace a future organizer oversight workflow beyond providing a basic way to manually adjust scoring when needed.
@@ -64,7 +63,6 @@ conflicts with either source, the Definitions and ADR-004 take precedence.
 - 6.20 On the final weekday Game Day of each calendar month, the system will announce all Players tied for the highest Score as monthly Winners.
 - 6.21 After announcing monthly Winners, the system will start the next monthly Series.
 - 6.22 The system will provide a basic way for an Organizer to create a manual Score Event when needed.
-- 6.23 The system will alert the organizer if answer collection, scoring, question generation, or email sending fails.
 - 6.24 The system will identify non-respondents only among Players on the current Series Scoreboard.
 - 6.25 The Scoreboard will include each Player with a Submission or Score Event in the current Series, including Players with zero or negative Scores.
 
