@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
-from typing import Callable
+from typing import Callable, cast
 
 from qotd.domain.contacts import normalize_email_addresses
+from qotd.domain.canonical import (
+    INSTRUCTION_APPLIED,
+    INSTRUCTION_REJECTED,
+    OrganizerInstruction,
+    gmail_message_key,
+    new_id,
+)
 from qotd.domain.dates import monthly_series
 from qotd.domain.models import ManualAdjustment, MonthlyScore
 from qotd.domain.scoring import latest_score_map, standings_from_scores
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.core import StorageClient
+from qotd.external.storage.canonical import CanonicalState
 from qotd.presentation.emails import build_organizer_email
+from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
+from qotd.usecases.parse_organizer_instruction import QUOTED_HISTORY_PREFIXES, parse_organizer_instruction_payload
 
 
 @dataclass(frozen=True)
@@ -24,11 +35,12 @@ class ScoreAdjustmentConfig:
     email: str
     points_delta: int
     reason: str
-    state_store: StorageClient
+    state_store: object
     game_date: date | None = None
     series: str | None = None
     source_gmail_message_id: str = ""
     idempotency_key: str | None = None
+    organizer_instruction: OrganizerInstruction | None = None
     dry_run: bool = False
 
 
@@ -65,8 +77,8 @@ class ProcessScoreAdjustmentEmailsConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StorageClient
-    query: str = 'is:unread "Action: adjust-score"'
+    state_store: StorageClient | CanonicalState
+    query: str = "is:unread"
     max_results: int = 25
     dry_run: bool = False
 
@@ -129,24 +141,16 @@ def question_exists(records: list[dict[str, object]], *, game_date: date) -> boo
 def parse_score_adjustment_email(body_text: str) -> ParsedScoreAdjustmentRequest:
     """Parse a plain-text score adjustment request email."""
 
-    fields: dict[str, str] = {}
-    for raw_line in body_text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        if ":" not in raw_line:
-            continue
-        key, value = raw_line.split(":", 1)
-        normalized_key = key.strip().lower()
-        if normalized_key:
-            fields[normalized_key] = value.strip()
+    payload = parse_organizer_instruction_payload(body_text)
+    if payload.action != "record-score-event":
+        raise ValueError("Action must be record-score-event")
+    fields = payload.fields
 
-    action = fields.get("action", "")
-    if action.casefold() != "adjust-score":
-        raise ValueError("Action must be adjust-score")
-
-    participant = fields.get("participant", "")
+    participant = fields.get("player", "")
     points_text = fields.get("points", "")
     reason = fields.get("reason", "")
     if not participant:
-        raise ValueError("Participant is required")
+        raise ValueError("Player is required")
     if not points_text:
         raise ValueError("Points is required")
     if not reason:
@@ -157,15 +161,15 @@ def parse_score_adjustment_email(body_text: str) -> ParsedScoreAdjustmentRequest
     except ValueError as error:
         raise ValueError("Points must be an integer") from error
 
-    game_date_text = fields.get("game date", "")
+    game_date_text = fields.get("day", "")
     month_text = fields.get("month", "")
     series_text = fields.get("series", "")
     if game_date_text and (month_text or series_text):
-        raise ValueError("Use either Game date or Month, not both")
+        raise ValueError("Use either Day or Series, not both")
     if month_text and series_text:
         raise ValueError("Use either Month or Series, not both")
     if not game_date_text and not month_text and not series_text:
-        raise ValueError("Game date or Month is required")
+        raise ValueError("Day or Series is required")
 
     game_date = date.fromisoformat(game_date_text) if game_date_text else None
     series = None
@@ -209,21 +213,83 @@ def apply_score_adjustment(config: ScoreAdjustmentConfig) -> ScoreAdjustmentResu
         raise ValueError("points_delta cannot be 0")
 
     series = adjustment_series(game_date=config.game_date, series=config.series)
-    if config.game_date is not None and not question_exists(
-        config.state_store.read_question_records(),
-        game_date=config.game_date,
-    ):
-        raise ValueError(f"no stored question exists for {config.game_date.isoformat()}")
-
     idempotency_key = config.idempotency_key or build_adjustment_idempotency_key(
         email=email,
         reason=reason,
         game_date=config.game_date,
         series=series,
     )
+    if isinstance(config.state_store, CanonicalState):
+        if config.game_date is not None:
+            game = config.state_store.find_game(day=config.game_date)
+            if game is None:
+                raise ValueError(f"no Game exists for {config.game_date.isoformat()}")
+            series_id = game.series_id
+        else:
+            month = date(2000 + int(series[2:]), int(series[:2]), 1)
+            series_record = config.state_store.create_or_find_series(
+                name=month.strftime("%Y-%m"),
+                starts_on=month,
+                ends_on=month.replace(day=calendar.monthrange(month.year, month.month)[1]),
+            )
+            series_id = series_record.id
+        source_message_id = config.source_gmail_message_id or idempotency_key
+        instruction = config.organizer_instruction or OrganizerInstruction(
+            id=new_id(), source_message_key=gmail_message_key(source_message_id), sender_email="organizer",
+            subject="Manual Score Event", received_at=datetime.now(UTC), action="record-score-event",
+            status=INSTRUCTION_APPLIED, processed_at=datetime.now(UTC),
+        )
+        existing_instruction = config.state_store.find_organizer_instruction(
+            source_message_key=instruction.source_message_key
+        )
+        if existing_instruction is not None:
+            scoreboard = config.state_store.read_scoreboard(series_id=series_id)
+            player_score = next((item.score for item in scoreboard if item.email == email), 0)
+            adjustment = ManualAdjustment(
+                series=series, email=email, points_delta=config.points_delta,
+                source_gmail_message_id=source_message_id, idempotency_key=f"manual:{instruction.source_message_key}",
+                reason=reason, created_at=existing_instruction.processed_at.isoformat(),
+            )
+            standings = tuple(MonthlyScore(series=series, email=item.email, points=item.score) for item in scoreboard)
+            return ScoreAdjustmentResult(
+                adjustment=adjustment, monthly_score=MonthlyScore(series=series, email=email, points=player_score),
+                standings=standings, applied=False,
+            )
+        event = record_score_event(
+            state=config.state_store,
+            request=ManualScoreEventRequest(
+                player_email=email,
+                points_delta=config.points_delta,
+                reason=reason,
+                series_id=series_id,
+                organizer_instruction=instruction,
+                game_day=config.game_date,
+            ),
+            created_at=datetime.now(UTC),
+        )
+        scoreboard = config.state_store.read_scoreboard(series_id=series_id)
+        player_score = next(item.score for item in scoreboard if item.player_id == event.player_id)
+        adjustment = ManualAdjustment(
+            series=series, email=email, points_delta=config.points_delta,
+            source_gmail_message_id=source_message_id, idempotency_key=event.idempotency_key,
+            reason=reason, created_at=event.created_at.isoformat(),
+        )
+        standings = tuple(MonthlyScore(series=series, email=item.email, points=item.score) for item in scoreboard)
+        return ScoreAdjustmentResult(
+            adjustment=adjustment,
+            monthly_score=MonthlyScore(series=series, email=email, points=player_score),
+            standings=standings,
+            applied=True,
+        )
+    state_store = cast(StorageClient, config.state_store)
+    if config.game_date is not None and not question_exists(
+        state_store.read_question_records(),
+        game_date=config.game_date,
+    ):
+        raise ValueError(f"no stored question exists for {config.game_date.isoformat()}")
 
-    existing_adjustments = config.state_store.read_manual_adjustments()
-    existing_scores = config.state_store.read_monthly_scores(series=series)
+    existing_adjustments = state_store.read_manual_adjustments()
+    existing_scores = state_store.read_monthly_scores(series=series)
     scores = latest_score_map(existing_scores, series=series)
     current_points = scores.get(email, 0)
     updated_points = current_points + config.points_delta
@@ -249,8 +315,8 @@ def apply_score_adjustment(config: ScoreAdjustmentConfig) -> ScoreAdjustmentResu
 
     scores[email] = updated_points
     if not config.dry_run:
-        config.state_store.append_manual_adjustment(adjustment)
-        config.state_store.append_monthly_score(monthly_score)
+        state_store.append_manual_adjustment(adjustment)
+        state_store.append_monthly_score(monthly_score)
 
     return ScoreAdjustmentResult(
         adjustment=adjustment,
@@ -274,9 +340,9 @@ def build_score_adjustment_response_body(
             f"Message: {request_message.message_id}\n"
             f"Reason: {error}\n\n"
             "Expected template:\n"
-            "Action: adjust-score\n"
-            "Participant: person@example.com\n"
-            "Game date: 2026-07-08\n"
+            "Action: record-score-event\n"
+            "Player: person@example.com\n"
+            "Day: 2026-07-08\n"
             "Points: 1\n"
             "Reason: unclear_answer_accepted\n"
             "Gmail message ID: msg_123\n"
@@ -288,7 +354,7 @@ def build_score_adjustment_response_body(
     standings = "\n".join(f"- {score.email}: {score.points}" for score in result.standings)
     return (
         f"{status} score adjustment.\n\n"
-        f"Participant: {result.monthly_score.email}\n"
+        f"Player: {result.monthly_score.email}\n"
         f"Series: {result.monthly_score.series}\n"
         f"Points delta: {result.adjustment.points_delta}\n"
         f"Reason: {result.adjustment.reason}\n"
@@ -347,6 +413,16 @@ def process_score_adjustment_emails(
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
         adjustment_result: ScoreAdjustmentResult | None = None
         error: str | None = None
+        instruction = OrganizerInstruction(
+            id=new_id(),
+            source_message_key=gmail_message_key(message.message_id),
+            sender_email=sender_email,
+            subject=message.subject,
+            received_at=message.sent_at or datetime.now(UTC),
+            action=_instruction_action(message.body_text),
+            status=INSTRUCTION_APPLIED,
+            processed_at=datetime.now(UTC),
+        )
 
         if sender_email not in approved_senders:
             error = f"sender is not approved: {sender_email}"
@@ -361,13 +437,29 @@ def process_score_adjustment_emails(
                         state_store=config.state_store,
                         game_date=request.game_date,
                         series=request.series,
-                        source_gmail_message_id=request.source_gmail_message_id or message.message_id,
+                        source_gmail_message_id=message.message_id,
                         idempotency_key=request.idempotency_key,
+                        organizer_instruction=instruction,
                         dry_run=config.dry_run,
                     )
                 )
             except ValueError as exc:
                 error = str(exc)
+
+        if error is not None and isinstance(config.state_store, CanonicalState) and not config.dry_run:
+            config.state_store.record_organizer_instruction(
+                OrganizerInstruction(
+                    id=instruction.id,
+                    source_message_key=instruction.source_message_key,
+                    sender_email=instruction.sender_email,
+                    subject=instruction.subject,
+                    received_at=instruction.received_at,
+                    action=instruction.action,
+                    status=INSTRUCTION_REJECTED,
+                    processed_at=instruction.processed_at,
+                    rejection_reason=error,
+                )
+            )
 
         response_body = build_score_adjustment_response_body(
             request_message=message,
@@ -400,3 +492,16 @@ def process_score_adjustment_emails(
         searched_query=config.query,
         processed=tuple(processed),
     )
+
+
+def _instruction_action(body_text: str) -> str:
+    """Return an action label even when the initial payload is malformed."""
+
+    for raw_line in body_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.casefold().startswith(QUOTED_HISTORY_PREFIXES):
+            break
+        name, separator, value = line.partition(":")
+        if separator and name.strip().casefold() == "action":
+            return value.strip().casefold() or "unknown"
+    return "unknown"

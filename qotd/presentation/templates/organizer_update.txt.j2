@@ -24,7 +24,7 @@ Needs review:
 {% for reply in result.needs_review -%}
 - {{ reply.email }}: {{ reply.interpreted_option }}
   Adjustment template:
-  Action: adjust-score
+  Action: record-score-event
   Player: {{ reply.email }}
   Day: {{ question.game_date }}
   Points: 1

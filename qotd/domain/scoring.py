@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from qotd.domain.canonical import gmail_message_key
 from qotd.domain.dates import monthly_series
 from qotd.domain.models import MonthlyScore, ReplyCandidate, ReplyProcessingRecord, StoredQuestion
 
@@ -90,7 +91,9 @@ def select_latest_eligible_replies(
         if received_at >= cutoff_at:
             continue
         current = selected.get(reply.sender_email)
-        if current is None or received_at > parse_iso_datetime(current.received_at):
+        if current is None or (received_at, gmail_message_key(reply.gmail_message_id)) > (
+            parse_iso_datetime(current.received_at), gmail_message_key(current.gmail_message_id)
+        ):
             selected[reply.sender_email] = reply
     return selected
 

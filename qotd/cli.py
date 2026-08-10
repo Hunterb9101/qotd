@@ -11,6 +11,7 @@ from datetime import date
 from qotd.domain.dates import current_game_date
 from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
+from qotd.external.email.gmail import search_messages
 from qotd.provision import provision_canonical_state
 from qotd.usecases.set_answer import ANSWER_INSTRUCTION_QUERY, ProcessSetAnswerEmailsConfig, process_set_answer_emails
 from qotd.usecases.adjust_score import (
@@ -19,7 +20,12 @@ from qotd.usecases.adjust_score import (
     apply_score_adjustment,
     process_score_adjustment_emails,
 )
-from qotd.usecases.score_submissions import LLMAnswerInterpreter, ScoreResponsesConfig, score_responses
+from qotd.usecases.score_submissions import (
+    LLMAnswerInterpreter,
+    ScoreResponsesConfig,
+    collect_submissions_for_day,
+    score_responses,
+)
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
 from qotd.usecases.repair_question import RepairGeneratedQuestion
@@ -173,7 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_google_options(score_parser)
     score_parser.add_argument("--dry-run", action="store_true")
 
-    adjust_parser = subparsers.add_parser("adjust-score", help="Apply a manual score adjustment")
+    collect_parser = subparsers.add_parser("collect-submissions", help="Collect a Day's Player Submissions without scoring")
+    collect_parser.add_argument("--date", required=True, type=parse_date)
+    collect_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
+    collect_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
+    add_google_options(collect_parser)
+
+    adjust_parser = subparsers.add_parser("record-score-event", help="Record a manual Score Event")
     adjust_parser.add_argument("--email", required=True)
     period_group = adjust_parser.add_mutually_exclusive_group(required=True)
     period_group.add_argument("--date", dest="game_date", type=parse_date)
@@ -186,13 +198,13 @@ def build_parser() -> argparse.ArgumentParser:
     adjust_parser.add_argument("--dry-run", action="store_true")
 
     email_adjust_parser = subparsers.add_parser(
-        "process-score-adjustments",
-        help="Process score adjustment request emails",
+        "process-score-events",
+        help="Process manual Score Event Organizer Instructions",
     )
     email_adjust_parser.add_argument("--sender", default=os.environ.get("QOTD_SENDER", ""))
     email_adjust_parser.add_argument("--gmail-user", default=os.environ.get("QOTD_SENDER", ""))
     email_adjust_parser.add_argument("--organizer", action="append", default=[])
-    email_adjust_parser.add_argument("--query", default='is:unread "Action: adjust-score"')
+    email_adjust_parser.add_argument("--query", default="is:unread")
     email_adjust_parser.add_argument("--max-results", type=int, default=25)
     add_google_options(email_adjust_parser)
     email_adjust_parser.add_argument("--dry-run", action="store_true")
@@ -310,6 +322,23 @@ def main() -> None:
         )
         print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))
 
+    elif args.command == "collect-submissions":
+        require_sender_options(args)
+        require_google_options(args)
+        state_store = build_bigquery_state_store(
+            project_id=args.google_cloud_project, dataset=args.bigquery_dataset,
+            oauth_client_id=args.oauth_client_id, oauth_client_secret=args.oauth_client_secret,
+            oauth_refresh_token=args.oauth_refresh_token,
+        )
+        submissions = collect_submissions_for_day(
+            state=state_store, game_day=args.date, sender=args.sender,
+            fetch_messages=lambda query: search_messages(
+                user_id=args.gmail_user, oauth_client_id=args.oauth_client_id,
+                oauth_client_secret=args.oauth_client_secret, oauth_refresh_token=args.oauth_refresh_token, query=query,
+            ),
+        )
+        print(f"Collected {len(submissions)} Submissions for {args.date.isoformat()}")
+
     elif args.command == "score-responses":
         require_sender_options(args)
         require_google_options(args)
@@ -352,7 +381,7 @@ def main() -> None:
             print()
             print(score_result.organizer_update_body)
 
-    elif args.command == "adjust-score":
+    elif args.command == "record-score-event":
         require_google_options(args)
         state_store = build_bigquery_state_store(
             project_id=args.google_cloud_project,
@@ -384,7 +413,7 @@ def main() -> None:
             f"{adjustment_result.monthly_score.points} points in {adjustment_result.monthly_score.series}"
         )
 
-    elif args.command == "process-score-adjustments":
+    elif args.command == "process-score-events":
         require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(
@@ -411,7 +440,7 @@ def main() -> None:
             )
         )
         print(
-            f"Processed {len(processing_result.processed)} score adjustment request emails "
+            f"Processed {len(processing_result.processed)} manual Score Event instructions "
             f"for query: {processing_result.searched_query}"
         )
         for adjustment_item in processing_result.processed:

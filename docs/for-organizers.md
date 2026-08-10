@@ -10,7 +10,7 @@ GitHub Actions runs the weekday game on the following schedule:
 - 7 AM PDT: scoring summary sent to the organizer
 - 2 PM PDT: Question sent to Players
 
-The management-email workflow runs at `13:55 UTC`, five minutes before the scoring workflow. It processes Answer instructions first and the legacy `adjust-score` requests second. Both workflows share a concurrency group so their state writes do not overlap.
+The management-email workflow runs at `13:55 UTC`, five minutes before the scoring workflow. It processes Answer instructions first and manual Score Event instructions second. Both workflows share a concurrency group so their state writes do not overlap.
 
 ## Email and Players
 
@@ -100,46 +100,46 @@ Source URL: https://example.com/source-for-answer
 
 The management job finds unread emails containing `Action: set-answer` and validates the Organizer sender, Game Day, Answer option, source URL, and idempotency identity. If a manual Game has no Answer, scoring skips that Day and emails the expected template to the Organizer.
 
-The scheduled `Process QOTD Score Adjustments` workflow processes the email before scoring. To process it immediately, open that workflow in the repository's **Actions** tab and choose **Run workflow**.
+The scheduled `Process QOTD Score Events` workflow processes the email before scoring. To process it immediately, open that workflow in the repository's **Actions** tab and choose **Run workflow**.
 
-## Legacy `adjust-score` Email
+## Manual Score Event Email
 
-The current `adjust-score` workflow is a legacy path that will be replaced by an Organizer Instruction creating a manual Score Event. Until that cutover, send a new plain-text email from an approved Organizer address to the QOTD Gmail account configured in `QOTD_SENDER`. If the Organizer address and QOTD account are the same, send the email to that account itself.
+To create a manual Score Event, send a plain-text Organizer Instruction from an approved Organizer address to the QOTD Gmail account configured in `QOTD_SENDER`. If the Organizer address and QOTD account are the same, send the email to that account itself.
 
 The subject is not enforced. A useful subject is:
 
 ```text
-QOTD adjust-score - 2026-07-08
+QOTD Score Event - 2026-07-08
 ```
 
 For example, this request adds one point to `person@example.com` for the July 8 question:
 
 ```text
-Action: adjust-score
+Action: record-score-event
 Player: person@example.com
-Game date: 2026-07-08
+Day: 2026-07-08
 Points: 1
 Reason: unclear answer accepted
 ```
 
 `Points` is the change to the Player's Score, not the desired total. Use a positive integer such as `1` to add points or a negative integer such as `-1` to remove them. `Reason` can be a short plain-language explanation.
 
-Use `Game date` when the correction is tied to a particular question. For a correction that applies to the month generally, use `Month` instead:
+Use `Day` when the Score Event is tied to a particular Game. For a Series-wide Score Event, use `Month` instead:
 
 ```text
-Action: adjust-score
+Action: record-score-event
 Player: person@example.com
 Month: 2026-07
 Points: -1
 Reason: duplicate correction
 ```
 
-Do not include both `Game date` and `Month`. A `Gmail message ID` is optional and normally should be omitted.
+Do not include both `Day` and `Month`. A `Gmail message ID` is optional and normally should be omitted.
 
 After sending the request:
 
 1. Leave the email unread.
-2. Wait for the scheduled **Process QOTD Score Adjustments** workflow, or open it in the repository's **Actions** tab and choose **Run workflow** to process the request immediately.
+2. Wait for the scheduled **Process QOTD Score Events** workflow, or open it in the repository's **Actions** tab and choose **Run workflow** to process the request immediately.
 3. Check the response email with the subject `QOTD score adjustment result`. It confirms the updated Score and Scoreboard or explains why the request was rejected.
 
 After processing a request, QOTD marks it as read so it will not be handled again.

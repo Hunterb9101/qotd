@@ -104,6 +104,11 @@ class InMemoryCanonicalState(CanonicalState):
         self.instructions[instruction.id] = instruction
         return instruction
 
+    def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None:
+        return next(
+            (item for item in self.instructions.values() if item.source_message_key == source_message_key), None
+        )
+
     def record_submission(self, submission: Submission) -> Submission:
         for existing in self.submissions.values():
             if existing.source_message_key == submission.source_message_key:
@@ -113,20 +118,21 @@ class InMemoryCanonicalState(CanonicalState):
             recorded = replace(submission, is_eligible=False, ineligibility_reason="late")
         else:
             recorded = replace(submission, is_eligible=True, ineligibility_reason=None)
-            eligible = [
-                item
-                for item in self.submissions.values()
-                if item.game_id == recorded.game_id and item.player_id == recorded.player_id and item.is_eligible
-            ]
-            for prior in eligible:
-                if prior.received_at < recorded.received_at:
-                    self.submissions[prior.id] = replace(
-                        prior, is_eligible=False, ineligibility_reason="superseded"
-                    )
-                else:
-                    recorded = replace(recorded, is_eligible=False, ineligibility_reason="superseded")
         self.submissions[recorded.id] = recorded
-        return recorded
+        eligible = [
+            item for item in self.submissions.values()
+            if item.game_id == recorded.game_id and item.player_id == recorded.player_id
+            and item.received_at < game.deadline_at
+        ]
+        if not eligible:
+            return recorded
+        selected = max(eligible, key=lambda item: (item.received_at, item.source_message_key))
+        for item in eligible:
+            self.submissions[item.id] = replace(
+                item, is_eligible=item.id == selected.id,
+                ineligibility_reason=None if item.id == selected.id else "superseded",
+            )
+        return self.submissions[recorded.id]
 
     def find_game(self, *, day: date) -> Game | None:
         return next((game for game in self.games.values() if game.day == day), None)
@@ -134,6 +140,9 @@ class InMemoryCanonicalState(CanonicalState):
     def find_latest_answered_game_before(self, *, day: date) -> Game | None:
         games = [game for game in self.games.values() if game.day < day and game.correct_option is not None]
         return max(games, key=lambda game: game.day, default=None)
+
+    def find_games_between(self, *, starts_on: date, ends_on: date) -> tuple[Game, ...]:
+        return tuple(game for game in self.games.values() if starts_on <= game.day <= ends_on)
 
     def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
         for existing in self.games.values():
@@ -203,6 +212,15 @@ class InMemoryCanonicalState(CanonicalState):
         for event in score_events:
             if event.game_id != current.id or event.event_type != "automatic":
                 raise ValueError("Automatic Score Events must belong to the scored Game")
+            submission = self.submissions.get(event.submission_id or "")
+            if (
+                submission is None
+                or submission.game_id != current.id
+                or submission.player_id != event.player_id
+                or not submission.is_eligible
+                or submission.ineligibility_reason is not None
+            ):
+                raise ValueError("Automatic Score Events must use the selected eligible Submission")
         if any(event.idempotency_key in {item.idempotency_key for item in self.score_events.values()} for event in score_events):
             return current
         scored = replace(current, status=GAME_SCORED, scored_at=game.scored_at)
@@ -219,6 +237,12 @@ class InMemoryCanonicalState(CanonicalState):
                 return existing
         self.score_events[event.id] = event
         return event
+
+    def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent:
+        recorded = self.record_organizer_instruction(instruction)
+        if recorded.status == INSTRUCTION_DUPLICATE:
+            return self.record_manual_score_event(event)
+        return self.record_manual_score_event(event)
 
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage:
         for existing in self.outbound_messages.values():

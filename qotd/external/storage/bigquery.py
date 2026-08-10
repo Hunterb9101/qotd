@@ -181,9 +181,54 @@ class BQAdapter(StorageClient, CanonicalState):
             return OrganizerInstruction(**{**rows[0], "status": INSTRUCTION_DUPLICATE})
         return OrganizerInstruction(**rows[0]) if rows else instruction
 
+    def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None:
+        rows = self.query_rows(
+            f"SELECT * FROM `{self.table('organizer_instructions')}` WHERE source_message_key = @source_message_key",
+            self._parameters({"source_message_key": source_message_key}),
+        )
+        return OrganizerInstruction(**rows[0]) if rows else None
+
     def record_submission(self, submission: Submission) -> Submission:
-        self._merge_record(table_name="submissions", key="source_message_key", values=asdict(submission))
-        return submission
+        values = asdict(submission)
+        fields = tuple(values)
+        statement = f"""
+            MERGE `{self.table('submissions')}` AS target
+            USING (SELECT {', '.join(f'@{field} AS {field}' for field in fields)}) AS source
+            ON target.source_message_key = source.source_message_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(fields)}) VALUES ({', '.join(f'source.{field}' for field in fields)});
+            UPDATE `{self.table('submissions')}` AS item
+            SET is_eligible = item.received_at < game.deadline_at,
+                ineligibility_reason = IF(item.received_at < game.deadline_at, NULL, 'late')
+            FROM `{self.table('games')}` AS game
+            WHERE item.source_message_key = @source_message_key AND item.game_id = game.id;
+            UPDATE `{self.table('submissions')}` AS prior
+            SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
+            FROM `{self.table('submissions')}` AS current
+            WHERE current.source_message_key = @source_message_key
+              AND current.is_eligible
+              AND prior.game_id = current.game_id AND prior.player_id = current.player_id
+              AND prior.is_eligible
+              AND (
+                prior.received_at < current.received_at
+                OR (prior.received_at = current.received_at AND prior.source_message_key < current.source_message_key)
+              );
+            UPDATE `{self.table('submissions')}` AS current
+            SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
+            WHERE current.source_message_key = @source_message_key
+              AND current.is_eligible
+              AND EXISTS (
+                SELECT 1 FROM `{self.table('submissions')}` AS later
+                WHERE later.game_id = current.game_id AND later.player_id = current.player_id
+                  AND later.is_eligible
+                  AND (
+                    later.received_at > current.received_at
+                    OR (later.received_at = current.received_at AND later.source_message_key > current.source_message_key)
+                  )
+              );
+            SELECT * FROM `{self.table('submissions')}` WHERE source_message_key = @source_message_key;
+        """
+        rows = self.transaction_rows(statement, self._parameters(values))
+        return Submission(**rows[0]) if rows else submission
 
     def find_game(self, *, day: Any) -> Game | None:
         """Return the Game for a Day, if one has been published or is pending."""
@@ -202,6 +247,14 @@ class BQAdapter(StorageClient, CanonicalState):
             self._parameters({"day": day}),
         )
         return Game(**rows[0]) if rows else None
+
+    def find_games_between(self, *, starts_on: Any, ends_on: Any) -> tuple[Game, ...]:
+        rows = self.query_rows(
+            f"""SELECT * FROM `{self.table('games')}`
+            WHERE day BETWEEN @starts_on AND @ends_on ORDER BY day""",
+            self._parameters({"starts_on": starts_on, "ends_on": ends_on}),
+        )
+        return tuple(Game(**row) for row in rows)
 
     def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
         values = asdict(game)
@@ -303,25 +356,44 @@ class BQAdapter(StorageClient, CanonicalState):
         score_events: tuple[ScoreEvent, ...] = (),
         outbound_messages: tuple[OutboundMessage, ...] = (),
     ) -> Game:
-        statements = [f"""
+        statements = ["""
             DECLARE transitioned BOOL DEFAULT FALSE;
-            UPDATE `{self.table("games")}`
-            SET status = 'scored', scored_at = @scored_at, updated_at = @updated_at
-            WHERE id = @id AND status = 'published' AND correct_option IS NOT NULL;
-            SET transitioned = @@row_count = 1;
-            ASSERT transitioned OR EXISTS (
-              SELECT 1 FROM `{self.table("games")}` WHERE id = @id AND status = 'scored'
-            ) AS 'Game cannot be scored before publication and an Answer';
+            DECLARE events_valid BOOL DEFAULT TRUE;
         """]
         parameters = asdict(game)
         for index, event in enumerate(score_events):
             event_values = {f"event_{index}_{key}": value for key, value in asdict(event).items()}
+            statements.append(
+                f"""SET events_valid = events_valid AND EXISTS (
+                    SELECT 1 FROM `{self.table("submissions")}`
+                    WHERE id = @event_{index}_submission_id
+                      AND game_id = @id
+                      AND player_id = @event_{index}_player_id
+                      AND is_eligible
+                      AND ineligibility_reason IS NULL
+                )
+                AND @event_{index}_game_id = @id
+                AND @event_{index}_event_type = 'automatic'
+                AND @event_{index}_series_id = (
+                    SELECT series_id FROM `{self.table("games")}` WHERE id = @id
+                );"""
+            )
+            parameters.update(event_values)
+        statements.append(f"""
+            UPDATE `{self.table("games")}`
+            SET status = 'scored', scored_at = @scored_at, updated_at = @updated_at
+            WHERE id = @id AND status = 'published' AND correct_option IS NOT NULL AND events_valid;
+            SET transitioned = @@row_count = 1;
+            ASSERT transitioned OR EXISTS (
+              SELECT 1 FROM `{self.table("games")}` WHERE id = @id AND status = 'scored'
+            ) AS 'Game cannot be scored before publication and an Answer';
+        """)
+        for index, event in enumerate(score_events):
             fields = tuple(asdict(event))
             statements.append(
                 f"""INSERT INTO `{self.table("score_events")}` ({", ".join(fields)})
                 SELECT {", ".join(f"@event_{index}_{field}" for field in fields)} WHERE transitioned;"""
             )
-            parameters.update(event_values)
         for index, message in enumerate(outbound_messages):
             message_values = {f"outbound_{index}_{key}": value for key, value in asdict(message).items()}
             fields = tuple(asdict(message))
@@ -344,6 +416,27 @@ class BQAdapter(StorageClient, CanonicalState):
     def record_manual_score_event(self, event: ScoreEvent) -> ScoreEvent:
         self._merge_record(table_name="score_events", key="idempotency_key", values=asdict(event))
         return event
+
+    def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent:
+        instruction_values = {f"instruction_{key}": value for key, value in asdict(instruction).items()}
+        event_values = {f"event_{key}": value for key, value in asdict(event).items()}
+        statement = f"""
+            DECLARE instruction_is_new BOOL DEFAULT NOT EXISTS (
+                SELECT 1 FROM `{self.table('organizer_instructions')}`
+                WHERE source_message_key = @instruction_source_message_key
+            );
+            MERGE `{self.table('organizer_instructions')}` AS target
+            USING (SELECT {', '.join(f'@instruction_{field} AS {field}' for field in asdict(instruction))}) AS source
+            ON target.source_message_key = source.source_message_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
+            INSERT INTO `{self.table('score_events')}` ({', '.join(asdict(event))})
+            SELECT {', '.join(f'@event_{field}' for field in asdict(event))}
+            WHERE instruction_is_new
+              AND NOT EXISTS (SELECT 1 FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key);
+            SELECT * FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key;
+        """
+        rows = self.transaction_rows(statement, self._parameters({**instruction_values, **event_values}))
+        return ScoreEvent(**rows[0]) if rows else event
 
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage:
         self._merge_record(table_name="outbound_messages", key="idempotency_key", values=asdict(message))

@@ -31,7 +31,7 @@ class Phase1SendTests(unittest.TestCase):
         with patch.dict("os.environ", {"QOTD_SENDER": "sender@example.com"}, clear=True):
             parser = build_parser()
 
-        for command in ("publish-question", "score-responses", "process-score-adjustments"):
+        for command in ("publish-question", "score-responses", "process-score-events"):
             args = parser.parse_args([command])
             require_sender_options(args)
 

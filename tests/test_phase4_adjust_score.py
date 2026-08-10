@@ -141,7 +141,7 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
 
         args = parser.parse_args(
             [
-                "adjust-score",
+                "record-score-event",
                 "--email",
                 "person@example.com",
                 "--date",
@@ -155,7 +155,7 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(args.command, "adjust-score")
+        self.assertEqual(args.command, "record-score-event")
         self.assertEqual(args.game_date, date(2026, 7, 8))
         self.assertEqual(args.points_delta, 1)
         self.assertEqual(args.gmail_message_id, "msg-123")
@@ -163,9 +163,9 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
     def test_parse_score_adjustment_email_accepts_template(self) -> None:
         request = parse_score_adjustment_email(
             """
-            Action: adjust-score
-            Participant: person@example.com
-            Game date: 2026-07-09
+            Action: record-score-event
+            Player: person@example.com
+            Day: 2026-07-09
             Points: 1
             Reason: unclear_answer_accepted
             Gmail message ID: msg_123
@@ -181,8 +181,8 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
     def test_parse_score_adjustment_email_accepts_month(self) -> None:
         request = parse_score_adjustment_email(
             """
-            Action: adjust-score
-            Participant: person@example.com
+            Action: record-score-event
+            Player: person@example.com
             Month: 2026-07
             Points: -1
             Reason: duplicate_correction
@@ -220,9 +220,9 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
                     subject="Score correction",
                     sent_at=datetime(2026, 7, 10, 14, 0, tzinfo=UTC),
                     body_text=(
-                        "Action: adjust-score\n"
-                        "Participant: player@example.com\n"
-                        "Game date: 2026-07-09\n"
+                        "Action: record-score-event\n"
+                        "Player: player@example.com\n"
+                        "Day: 2026-07-09\n"
                         "Points: 1\n"
                         "Reason: unclear_answer_accepted\n"
                         "Gmail message ID: reply-1\n"
@@ -237,7 +237,7 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
         self.assertTrue(result.processed[0].accepted)
         self.assertEqual(result.processed[0].status, "applied")
         self.assertEqual(result.processed[0].response_message_id, "confirmation-1")
-        self.assertEqual(store.read_manual_adjustments()[0]["source_gmail_message_id"], "reply-1")
+        self.assertEqual(store.read_manual_adjustments()[0]["source_gmail_message_id"], "request-1")
         self.assertEqual(store.read_monthly_scores(series="0726")[0]["points"], 1)
         self.assertEqual(sent_messages[0]["To"], "organizer@example.com")
         self.assertIn("Applied score adjustment", sent_messages[0].get_content())
@@ -269,7 +269,7 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
                     sender_email="stranger@example.com",
                     subject="Score correction",
                     sent_at=datetime(2026, 7, 10, 14, 0, tzinfo=UTC),
-                    body_text="Action: adjust-score\nParticipant: player@example.com\n",
+                    body_text="Action: record-score-event\nPlayer: player@example.com\n",
                 )
             ],
             send_message=send_rejection,
@@ -287,18 +287,18 @@ class Phase4ScoreAdjustmentTests(unittest.TestCase):
 
         args = parser.parse_args(
             [
-                "process-score-adjustments",
+                "process-score-events",
                 "--organizer",
                 "organizer@example.com",
                 "--query",
-                'is:unread "Action: adjust-score"',
+                'is:unread "Action: record-score-event"',
                 "--max-results",
                 "10",
                 "--dry-run",
             ]
         )
 
-        self.assertEqual(args.command, "process-score-adjustments")
+        self.assertEqual(args.command, "process-score-events")
         self.assertEqual(args.organizer, ["organizer@example.com"])
         self.assertEqual(args.max_results, 10)
         self.assertTrue(args.dry_run)

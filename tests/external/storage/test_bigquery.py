@@ -8,7 +8,7 @@ import pytest
 
 from datetime import UTC, date, datetime
 
-from qotd.domain.canonical import GAME_PUBLISHED, Game, ScoreEvent
+from qotd.domain.canonical import GAME_PUBLISHED, Game, ScoreEvent, Submission
 from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS
 
 
@@ -101,6 +101,25 @@ def test_create_or_find_player_uses_a_parameterized_idempotent_merge() -> None:
     assert any(parameter.value == "ada@example.com" for parameter in config["query_parameters"])
 
 
+def test_record_submission_classifies_deadline_and_supersession_in_one_transaction() -> None:
+    client = FakeClient([[]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+    now = datetime(2026, 8, 11, tzinfo=UTC)
+    submission = Submission("submission-1", "message-key", "game-1", "player-1", "A", now, True, now, now)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        adapter.record_submission(submission)
+
+    sql, _ = client.calls[0]
+    assert "BEGIN TRANSACTION;" in sql
+    assert "item.received_at < game.deadline_at" in sql
+    assert "'late'" in sql
+    assert "'superseded'" in sql
+    assert "prior.source_message_key < current.source_message_key" in sql
+    assert "later.source_message_key > current.source_message_key" in sql
+
+
 def test_score_game_writes_game_events_and_outbound_intents_in_one_transaction() -> None:
     client = FakeClient([[]])
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
@@ -120,6 +139,11 @@ def test_score_game_writes_game_events_and_outbound_intents_in_one_transaction()
     assert "UPDATE `project-id.qotd.games`" in sql
     assert "INSERT INTO `project-id.qotd.score_events`" in sql
     assert "SET transitioned = @@row_count = 1" in sql
+    assert "DECLARE events_valid BOOL DEFAULT TRUE" in sql
+    assert "`project-id.qotd.submissions`" in sql
+    assert "AND is_eligible" in sql
+    assert "@event_0_event_type = 'automatic'" in sql
+    assert "@event_0_series_id" in sql
     assert "WHERE transitioned" in sql
     assert "@event_0_idempotency_key" in sql
     assert "event-key" not in sql

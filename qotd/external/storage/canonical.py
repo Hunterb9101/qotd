@@ -30,6 +30,9 @@ class CanonicalState(ABC):
     def record_organizer_instruction(self, instruction: OrganizerInstruction) -> OrganizerInstruction: ...
 
     @abstractmethod
+    def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None: ...
+
+    @abstractmethod
     def record_submission(self, submission: Submission) -> Submission: ...
 
     @abstractmethod
@@ -37,6 +40,9 @@ class CanonicalState(ABC):
 
     @abstractmethod
     def find_latest_answered_game_before(self, *, day: date) -> Game | None: ...
+
+    @abstractmethod
+    def find_games_between(self, *, starts_on: date, ends_on: date) -> tuple[Game, ...]: ...
 
     @abstractmethod
     def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game: ...
@@ -61,6 +67,9 @@ class CanonicalState(ABC):
 
     @abstractmethod
     def record_manual_score_event(self, event: ScoreEvent) -> ScoreEvent: ...
+
+    @abstractmethod
+    def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent: ...
 
     @abstractmethod
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage: ...

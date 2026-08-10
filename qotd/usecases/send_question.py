@@ -19,7 +19,7 @@ from qotd.presentation.emails import build_player_email
 from qotd.usecases.check_manual_question import MessageFetcher, check_manual_question
 from qotd.usecases.publish_game import publish_automated_game
 from qotd.usecases.get_question_history import find_latest_answered_question_before, stored_question_from_game
-from qotd.usecases.get_score_history import PlayerResults
+from qotd.usecases.get_score_history import PlayerResults, load_player_results
 
 
 QuestionGeneratorForDate = Callable[[date, object], Question]
@@ -121,7 +121,11 @@ def send_question(
         question = config.question_generator(config.game_date, config.state_store)
     validate_question(question)
     previous_question = find_latest_answered_question_before(state, config.game_date)
-    player_results = PlayerResults(point_earners=(), standings=())
+    player_results = (
+        load_player_results(state, date.fromisoformat(previous_question.game_date))
+        if previous_question is not None
+        else PlayerResults(point_earners=(), standings=())
+    )
     email_message = build_player_email(
         question,
         config.sender,

@@ -1,4 +1,4 @@
-name: Process QOTD Score Adjustments
+name: Process QOTD Score Events
 
 on:
   schedule:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  process-score-adjustments:
+  process-score-events:
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -33,5 +33,5 @@ jobs:
       - name: Process Organizer Answer instructions
         run: python -m qotd process-set-answers
 
-      - name: Process score adjustment emails
-        run: python -m qotd process-score-adjustments
+      - name: Process manual Score Event instructions
+        run: python -m qotd process-score-events

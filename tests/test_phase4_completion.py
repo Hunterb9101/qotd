@@ -222,7 +222,7 @@ class Phase4CompletionTests(unittest.TestCase):
             ),
         )
 
-        self.assertIn("Action: adjust-score", body)
+        self.assertIn("Action: record-score-event", body)
         self.assertIn("Gmail message ID: reply-1", body)
         self.assertIn("Monthly winner announcement", body)
         self.assertIn("winner@example.com", body)

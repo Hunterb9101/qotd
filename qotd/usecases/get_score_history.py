@@ -5,10 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from qotd.domain.dates import monthly_series
 from qotd.domain.models import MonthlyScore
-from qotd.domain.scoring import latest_score_map, standings_from_scores
-from qotd.external.storage.core import StorageClient
+from qotd.external.storage.canonical import CanonicalState
 
 
 @dataclass(frozen=True)
@@ -19,20 +17,17 @@ class PlayerResults:
     standings: tuple[MonthlyScore, ...]
 
 
-def load_player_results(state_store: StorageClient, game_date: date) -> PlayerResults:
-    """Load point earners for a Day and its latest Series Scoreboard."""
+def load_player_results(state_store: CanonicalState, game_date: date) -> PlayerResults:
+    """Load a Day's canonical Series Scoreboard for Player-facing rendering."""
 
-    game_date_text = game_date.isoformat()
-    latest_points_by_email: dict[str, int] = {}
-    for record in state_store.read_reply_processing_records(game_date=game_date_text):
-        email = record.get("email")
-        points = record.get("points_awarded")
-        if isinstance(email, str) and isinstance(points, int):
-            latest_points_by_email[email] = points
-
-    series = monthly_series(game_date)
-    scores = latest_score_map(state_store.read_monthly_scores(series=series), series=series)
+    game = state_store.find_game(day=game_date)
+    if game is None:
+        return PlayerResults(point_earners=(), standings=())
+    scoreboard = state_store.read_scoreboard(series_id=game.series_id)
     return PlayerResults(
-        point_earners=tuple(sorted(email for email, points in latest_points_by_email.items() if points > 0)),
-        standings=standings_from_scores(series, scores),
+        point_earners=(),
+        standings=tuple(
+            MonthlyScore(series=game.day.strftime("%m%y"), email=entry.email, points=entry.score)
+            for entry in scoreboard
+        ),
     )

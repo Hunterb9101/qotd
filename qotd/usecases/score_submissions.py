@@ -11,13 +11,24 @@ from typing import Any, Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.dates import MOUNTAIN_TIME, answer_cutoff_at, next_scoring_day, previous_game_day, question_subject
-from qotd.domain.models import OPTION_LABELS, ReplyCandidate, StoredQuestion
-from qotd.domain.canonical import OUTBOUND_PENDING, OutboundMessage, new_id
+from qotd.domain.models import MonthlyScore, OPTION_LABELS, ReplyCandidate, StoredQuestion
+from qotd.domain.canonical import (
+    OUTBOUND_PENDING,
+    SCORE_EVENT_AUTOMATIC,
+    Game,
+    OutboundMessage,
+    ScoreEvent,
+    Submission,
+    gmail_message_key,
+    new_id,
+)
 from qotd.domain.scoring import (
     AnswerInterpretation,
+    ScoredReply,
     ScoringResult,
     parse_deterministic_answer,
     parse_iso_datetime,
+    select_latest_eligible_replies,
     score_replies,
 )
 from qotd.external.email.core import ParsedEmailMessage
@@ -150,6 +161,63 @@ def collect_reply_candidates(
     return candidates
 
 
+def collect_submissions(
+    *, state: CanonicalState, game: Game, replies: list[ReplyCandidate], collected_at: datetime
+) -> dict[str, Submission]:
+    """Persist every discovered Player Submission, including late and superseded records."""
+
+    submissions: dict[str, Submission] = {}
+    for reply in replies:
+        player = state.create_or_find_player(email=reply.sender_email)
+        received_at = parse_iso_datetime(reply.received_at)
+        recorded = state.record_submission(
+            Submission(
+                id=new_id(), source_message_key=gmail_message_key(reply.gmail_message_id), game_id=game.id,
+                player_id=player.id, body_text=reply.body_text, received_at=received_at,
+                is_eligible=received_at < game.deadline_at, created_at=collected_at, updated_at=collected_at,
+            )
+        )
+        submissions[recorded.source_message_key] = recorded
+    return submissions
+
+
+def collect_recent_submissions(
+    *, state: CanonicalState, fetch_messages: MessageFetcher, scoring_day: date, sender: str
+) -> None:
+    """Run the ADR-006 audit collection pass for the current and preceding Series."""
+
+    current_start = scoring_day.replace(day=1)
+    preceding_start = (current_start - timedelta(days=1)).replace(day=1)
+    for game in state.find_games_between(starts_on=preceding_start, ends_on=scoring_day):
+        if game.status == "pending" or game.question_prompt is None or game.question_options is None:
+            continue
+        question = StoredQuestion(
+            game_date=game.day.isoformat(), prompt=game.question_prompt, options=game.question_options,
+            correct_option=game.correct_option or "", source_note=game.answer_source_note or "",
+            source_url=game.answer_source_url or "", source=game.publication_mode,
+            gmail_message_id=game.publication_message_key or "", created_at=(game.published_at or game.created_at).isoformat(),
+        )
+        replies = collect_reply_candidates(
+            fetch_messages(gmail_reply_query(game_date=game.day, scoring_date=scoring_day)), question=question, sender=sender
+        )
+        collect_submissions(state=state, game=game, replies=replies, collected_at=datetime.now(UTC))
+
+
+def collect_submissions_for_day(
+    *, state: CanonicalState, game_day: date, sender: str, fetch_messages: MessageFetcher
+) -> tuple[Submission, ...]:
+    """Collect a specified Day's Submissions for an audit without scoring its Game."""
+
+    game = state.find_game(day=game_day)
+    if game is None:
+        raise RuntimeError(f"No Game found for {game_day.isoformat()}")
+    question = load_question_for_game_date(state, game_day)
+    replies = collect_reply_candidates(
+        fetch_messages(gmail_reply_query(game_date=game_day, scoring_date=date.today())), question=question, sender=sender
+    )
+    return tuple(collect_submissions(state=state, game=game, replies=replies, collected_at=datetime.now(UTC)).values())
+
+
 def score_responses(
     config: ScoreResponsesConfig,
     *,
@@ -170,6 +238,22 @@ def score_responses(
         else _load_legacy_question_for_game_date(config.state_store, game_date)
     )
     query = gmail_reply_query(game_date=game_date, scoring_date=scoring_date)
+    if isinstance(config.state_store, CanonicalState):
+        if fetch_messages is None and config.dry_run:
+            def fetch_messages(_query: str) -> list[ParsedEmailMessage]:
+                return []
+        if fetch_messages is None:
+            def fetch_messages(gmail_query: str) -> list[ParsedEmailMessage]:
+                return search_messages(
+                    user_id=config.gmail_user,
+                    oauth_client_id=config.oauth_client_id,
+                    oauth_client_secret=config.oauth_client_secret,
+                    oauth_refresh_token=config.oauth_refresh_token,
+                    query=gmail_query,
+                )
+        collect_recent_submissions(
+            state=config.state_store, fetch_messages=fetch_messages, scoring_day=scoring_date, sender=config.sender
+        )
     if not question.correct_option:
         action = "set-answer" if isinstance(config.state_store, CanonicalState) else "set-correct-answer"
         body = (
@@ -258,20 +342,60 @@ def score_responses(
         game = config.state_store.find_game(day=game_date)
         if game is None:
             raise RuntimeError(f"No Game found for {game_date.isoformat()}")
-        config.state_store.score_game(replace(game, scored_at=datetime.now(UTC)))
+        submissions_by_message_key = collect_submissions(
+            state=config.state_store, game=game, replies=replies, collected_at=datetime.now(UTC)
+        )
+        events: list[ScoreEvent] = []
+        correct: list[ScoredReply] = []
+        incorrect: list[ScoredReply] = []
+        needs_review: list[ScoredReply] = []
+        selected_replies = select_latest_eligible_replies(replies, cutoff_at=game.deadline_at)
+        for reply in selected_replies.values():
+            submission = submissions_by_message_key[gmail_message_key(reply.gmail_message_id)]
+            interpretation = scoring_interpreter(submission.body_text)
+            points = int(not interpretation.needs_review and interpretation.option == question.correct_option)
+            event = ScoreEvent(
+                id=new_id(),
+                idempotency_key=f"automatic:{game.id}:{submission.id}",
+                player_id=submission.player_id,
+                series_id=game.series_id,
+                event_type=SCORE_EVENT_AUTOMATIC,
+                points_delta=points,
+                created_at=datetime.now(UTC),
+                game_id=game.id,
+                submission_id=submission.id,
+            )
+            events.append(event)
+            email = next(reply.sender_email for reply in replies if gmail_message_key(reply.gmail_message_id) == submission.source_message_key)
+            gmail_message_id = next(reply.gmail_message_id for reply in replies if gmail_message_key(reply.gmail_message_id) == submission.source_message_key)
+            scored_reply = ScoredReply(
+                email=email,
+                gmail_message_id=gmail_message_id,
+                interpreted_option=interpretation.option,
+                points_awarded=points,
+                needs_review=interpretation.needs_review,
+            )
+            (needs_review if interpretation.needs_review else correct if points else incorrect).append(scored_reply)
+        config.state_store.score_game(replace(game, scored_at=datetime.now(UTC)), score_events=tuple(events))
+        standings = tuple(
+            MonthlyScore(
+                series=game.day.strftime("%m%y"), email=entry.email, points=entry.score
+            )
+            for entry in config.state_store.read_scoreboard(series_id=game.series_id)
+        )
         scoring = ScoringResult(
             game_date=question.game_date,
-            correct=(),
-            incorrect=(),
-            needs_review=(),
+            correct=tuple(correct),
+            incorrect=tuple(incorrect),
+            needs_review=tuple(needs_review),
             skipped_processing_keys=(),
-            standings=(),
+            standings=standings,
         )
         body = build_organizer_update_body(question, scoring)
         return ScoreResponsesResult(
             question=question,
             scoring=scoring,
-            reply_count=0,
+            reply_count=len(replies),
             organizer_update_body=body,
             organizer_message_id=f"canonical:{game.id}",
             gmail_query=query,
