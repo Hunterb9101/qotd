@@ -173,6 +173,114 @@ class BQAdapter(CanonicalState):
             return OrganizerInstruction(**{**rows[0], "status": INSTRUCTION_DUPLICATE})
         return OrganizerInstruction(**rows[0]) if rows else instruction
 
+    def record_answer_instruction(
+        self,
+        *,
+        instruction: OrganizerInstruction,
+        series: Series,
+        game: Game,
+        outbound_message: OutboundMessage | None = None,
+    ) -> tuple[OrganizerInstruction, Game]:
+        """Commit an Answer Instruction, its Series, and its Game together."""
+
+        instruction_values = {f"instruction_{key}": value for key, value in asdict(instruction).items()}
+        series_values = {f"series_{key}": value for key, value in asdict(series).items()}
+        game_values = {f"game_{key}": value for key, value in asdict(game).items()}
+        outbound_values = (
+            {f"outbound_{key}": value for key, value in asdict(outbound_message).items()}
+            if outbound_message is not None else {}
+        )
+        game_fields = tuple(asdict(game))
+        game_source = ", ".join(
+            f"(SELECT id FROM `{self.table('series')}` WHERE name = @series_name) AS series_id"
+            if field == "series_id"
+            else f"@game_{field} AS {field}"
+            for field in game_fields
+        )
+        statement = f"""
+            DECLARE instruction_is_new BOOL DEFAULT NOT EXISTS (
+                SELECT 1 FROM `{self.table('organizer_instructions')}`
+                WHERE source_message_key = @instruction_source_message_key
+            );
+            MERGE `{self.table('organizer_instructions')}` AS target
+            USING (SELECT {', '.join(f'@instruction_{field} AS {field}' for field in asdict(instruction))}) AS source
+            ON target.source_message_key = source.source_message_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
+            MERGE `{self.table('series')}` AS target
+            USING (SELECT {', '.join(f'@series_{field} AS {field}' for field in asdict(series))}) AS source
+            ON target.name = source.name
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(series))}) VALUES ({', '.join(f'source.{field}' for field in asdict(series))});
+            MERGE `{self.table('games')}` AS target
+            USING (SELECT {game_source}) AS source
+            ON target.day = source.day
+            WHEN NOT MATCHED AND instruction_is_new THEN INSERT ({', '.join(game_fields)}) VALUES ({', '.join(f'source.{field}' for field in game_fields)})
+            WHEN MATCHED AND instruction_is_new AND target.correct_option IS NULL THEN UPDATE SET
+              correct_option = source.correct_option,
+              answer_source_url = source.answer_source_url,
+              answer_source_note = source.answer_source_note,
+              answer_instruction_id = source.answer_instruction_id,
+              updated_at = source.updated_at;
+            ASSERT NOT instruction_is_new OR EXISTS (
+              SELECT 1 FROM `{self.table('games')}`
+              WHERE day = @game_day AND correct_option = @game_correct_option
+            ) AS 'Game Answer is missing or conflicts with the existing Answer';
+            {self._answer_outbound_insert(outbound_message) if outbound_message is not None else ''}
+            SELECT * FROM `{self.table('games')}` WHERE day = @game_day;
+        """
+        rows = self.transaction_rows(
+            statement, self._parameters({**instruction_values, **series_values, **game_values, **outbound_values})
+        )
+        recorded_instruction = self.find_organizer_instruction(
+            source_message_key=instruction.source_message_key
+        )
+        if recorded_instruction is None:
+            recorded_instruction = instruction
+        elif recorded_instruction.id != instruction.id:
+            recorded_instruction = OrganizerInstruction(**{**asdict(recorded_instruction), "status": INSTRUCTION_DUPLICATE})
+        return recorded_instruction, self._game_from_rows(rows, fallback=game)
+
+    def record_organizer_instruction_outcome(
+        self, *, instruction: OrganizerInstruction, outbound_message: OutboundMessage
+    ) -> OrganizerInstruction:
+        """Commit an Organizer Instruction and outcome intent together."""
+
+        instruction_values = {f"instruction_{key}": value for key, value in asdict(instruction).items()}
+        outbound_values = {f"outbound_{key}": value for key, value in asdict(outbound_message).items()}
+        statement = f"""
+            DECLARE instruction_is_new BOOL DEFAULT NOT EXISTS (
+                SELECT 1 FROM `{self.table('organizer_instructions')}`
+                WHERE source_message_key = @instruction_source_message_key
+            );
+            MERGE `{self.table('organizer_instructions')}` AS target
+            USING (SELECT {', '.join(f'@instruction_{field} AS {field}' for field in asdict(instruction))}) AS source
+            ON target.source_message_key = source.source_message_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
+            {self._outbound_merge(outbound_message)}
+            SELECT * FROM `{self.table('organizer_instructions')}` WHERE source_message_key = @instruction_source_message_key;
+        """
+        rows = self.transaction_rows(statement, self._parameters({**instruction_values, **outbound_values}))
+        if rows and str(rows[0]["id"]) != instruction.id:
+            return OrganizerInstruction(**{**rows[0], "status": INSTRUCTION_DUPLICATE})
+        return OrganizerInstruction(**rows[0]) if rows else instruction
+
+    def _answer_outbound_insert(self, message: OutboundMessage) -> str:
+        fields = tuple(asdict(message))
+        return f"""
+            INSERT INTO `{self.table('outbound_messages')}` ({', '.join(fields)})
+            SELECT {', '.join(f'@outbound_{field}' for field in fields)}
+            WHERE instruction_is_new
+              AND NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
+        """
+
+    def _outbound_merge(self, message: OutboundMessage) -> str:
+        fields = tuple(asdict(message))
+        return f"""
+            MERGE `{self.table('outbound_messages')}` AS target
+            USING (SELECT {', '.join(f'@outbound_{field} AS {field}' for field in fields)}) AS source
+            ON target.idempotency_key = source.idempotency_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(fields)}) VALUES ({', '.join(f'source.{field}' for field in fields)});
+        """
+
     def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None:
         rows = self.query_rows(
             f"SELECT * FROM `{self.table('organizer_instructions')}` WHERE source_message_key = @source_message_key",
@@ -235,6 +343,15 @@ class BQAdapter(CanonicalState):
         rows = self.query_rows(
             f"""SELECT * FROM `{self.table('games')}`
             WHERE day < @day AND correct_option IS NOT NULL
+            ORDER BY day DESC LIMIT 1""",
+            self._parameters({"day": day}),
+        )
+        return Game(**rows[0]) if rows else None
+
+    def find_latest_scored_game_before(self, *, day: Any) -> Game | None:
+        rows = self.query_rows(
+            f"""SELECT * FROM `{self.table('games')}`
+            WHERE day < @day AND status = 'scored' AND correct_option IS NOT NULL
             ORDER BY day DESC LIMIT 1""",
             self._parameters({"day": day}),
         )
@@ -429,6 +546,48 @@ class BQAdapter(CanonicalState):
         """
         rows = self.transaction_rows(statement, self._parameters({**instruction_values, **event_values}))
         return ScoreEvent(**rows[0]) if rows else event
+
+    def record_manual_score_event_instruction(
+        self, *, player: Player, instruction: OrganizerInstruction, event: ScoreEvent, outbound_message: OutboundMessage
+    ) -> tuple[ScoreEvent, bool]:
+        """Atomically process a Manual Score Event Instruction and its outcome."""
+
+        player_values = {f"player_{key}": value for key, value in asdict(player).items()}
+        instruction_values = {f"instruction_{key}": value for key, value in asdict(instruction).items()}
+        event_values = {f"event_{key}": value for key, value in asdict(event).items()}
+        outbound_values = {f"outbound_{key}": value for key, value in asdict(outbound_message).items()}
+        statement = f"""
+            DECLARE instruction_is_new BOOL DEFAULT NOT EXISTS (
+                SELECT 1 FROM `{self.table('organizer_instructions')}`
+                WHERE source_message_key = @instruction_source_message_key
+            );
+            MERGE `{self.table('players')}` AS target
+            USING (SELECT {', '.join(f'@player_{field} AS {field}' for field in asdict(player))}) AS source
+            ON target.email = source.email
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(player))}) VALUES ({', '.join(f'source.{field}' for field in asdict(player))});
+            MERGE `{self.table('organizer_instructions')}` AS target
+            USING (SELECT {', '.join(f'@instruction_{field} AS {field}' for field in asdict(instruction))}) AS source
+            ON target.source_message_key = source.source_message_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
+            INSERT INTO `{self.table('score_events')}` ({', '.join(asdict(event))})
+            SELECT {', '.join(f'@event_{field}' if field != 'player_id' else '(SELECT id FROM `' + self.table('players') + '` WHERE email = @player_email)' for field in asdict(event))}
+            WHERE instruction_is_new
+              AND NOT EXISTS (SELECT 1 FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key);
+            MERGE `{self.table('outbound_messages')}` AS target
+            USING (SELECT {', '.join(f'@outbound_{field} AS {field}' for field in asdict(outbound_message))}) AS source
+            ON target.idempotency_key = source.idempotency_key
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(outbound_message))}) VALUES ({', '.join(f'source.{field}' for field in asdict(outbound_message))});
+            SELECT score_events.*, instruction_is_new AS instruction_is_new
+            FROM `{self.table('score_events')}` AS score_events
+            WHERE idempotency_key = @event_idempotency_key;
+        """
+        rows = self.transaction_rows(
+            statement, self._parameters({**player_values, **instruction_values, **event_values, **outbound_values})
+        )
+        if not rows:
+            return event, False
+        applied = bool(rows[0].pop("instruction_is_new"))
+        return ScoreEvent(**rows[0]), applied
 
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage:
         self._merge_record(table_name="outbound_messages", key="idempotency_key", values=asdict(message))

@@ -23,7 +23,10 @@ Configure the Group so that:
 - conversations and membership are private; and
 - the standard subscription footer is enabled.
 
-Google Group membership is the only Player list. QOTD correlates replies with the applicable Question and includes only Players with positive Scores in the current Series Scoreboard and non-respondent reporting.
+Google Group membership is the only Player list. QOTD correlates replies with
+the applicable Question. The current Series Scoreboard includes every Player
+with a Submission or Score Event in that Series, including zero and negative
+Scores; non-respondent reporting uses that Scoreboard.
 
 Use the same Google account to configure Google Cloud Platform.
 
@@ -144,7 +147,7 @@ After sending the request:
 
 1. Leave the email unread.
 2. Wait for the scheduled **Process QOTD Score Events** workflow, or open it in the repository's **Actions** tab and choose **Run workflow** to process the request immediately.
-3. Check the response email with the subject `QOTD score adjustment result`. It confirms the updated Score and Scoreboard or explains why the request was rejected.
+3. Check the response email with the subject `QOTD Manual Score Event result`. It confirms the updated Score and Scoreboard or explains why the request was rejected.
 
 After processing a request, QOTD marks it as read so it will not be handled again.
 

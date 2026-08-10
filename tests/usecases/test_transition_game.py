@@ -13,10 +13,10 @@ from qotd.usecases.publish_game import publish_manual_game
 from qotd.usecases.score_submissions import ScoreResponsesConfig, score_responses
 from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
 from qotd.usecases.adjust_score import (
-    ProcessScoreAdjustmentEmailsConfig,
-    ScoreAdjustmentConfig,
-    apply_score_adjustment,
-    process_score_adjustment_emails,
+    ManualScoreEventConfig,
+    ProcessManualScoreEventEmailsConfig,
+    process_manual_score_event_emails,
+    record_manual_score_event,
 )
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from tests.support import InMemoryCanonicalState
@@ -113,7 +113,7 @@ def test_manual_score_event_for_a_new_player_appears_in_the_scoreboard() -> None
     assert state.read_scoreboard(series_id=series.id)[0].email == "new@example.com"
 
 
-def test_manual_score_adjustment_uses_a_canonical_score_event() -> None:
+def test_manual_score_event_uses_a_canonical_score_event() -> None:
     state = InMemoryCanonicalState()
     game_day = date(2026, 8, 10)
     state.publish_game(
@@ -121,30 +121,30 @@ def test_manual_score_adjustment_uses_a_canonical_score_event() -> None:
              game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC),
              datetime(2026, 8, 11, tzinfo=UTC), correct_option="A")
     )
-    result = apply_score_adjustment(
-        ScoreAdjustmentConfig(email="new@example.com", points_delta=2, reason="correction", state_store=state, game_date=game_day)
+    result = record_manual_score_event(
+        ManualScoreEventConfig(email="new@example.com", points_delta=2, reason="correction", state_store=state, game_date=game_day)
     )
 
-    assert result.monthly_score.points == 2
+    assert result.player_score.points == 2
     assert next(iter(state.score_events.values())).event_type == "manual"
 
 
 def test_series_wide_manual_score_event_does_not_require_a_game() -> None:
     state = InMemoryCanonicalState()
 
-    result = apply_score_adjustment(
-        ScoreAdjustmentConfig(email="new@example.com", points_delta=-2, reason="correction", state_store=state, series="0826")
+    result = record_manual_score_event(
+        ManualScoreEventConfig(email="new@example.com", points_delta=-2, reason="correction", state_store=state, series="0826")
     )
 
     assert result.applied
-    assert result.monthly_score.points == -2
+    assert result.player_score.points == -2
     assert next(iter(state.score_events.values())).game_id is None
 
 
 def test_malformed_manual_score_event_email_is_durably_rejected() -> None:
     state = InMemoryCanonicalState()
-    result = process_score_adjustment_emails(
-        ProcessScoreAdjustmentEmailsConfig(
+    result = process_manual_score_event_emails(
+        ProcessManualScoreEventEmailsConfig(
             sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
             oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
         ),
@@ -157,6 +157,50 @@ def test_malformed_manual_score_event_email_is_durably_rejected() -> None:
 
     assert result.processed[0].status == "Points must be an integer"
     assert next(iter(state.instructions.values())).status == "rejected"
+
+
+def test_manual_score_event_commits_instruction_event_and_outcome_before_delivery() -> None:
+    state = InMemoryCanonicalState()
+    series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
+    game_day = date(2026, 8, 10)
+    state.publish_game(Game(new_id(), series.id, game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), correct_option="A"))
+    message = ParsedEmailMessage("instruction", "thread", "organizer@example.com", "Correction", datetime(2026, 8, 11, tzinfo=UTC), "Action: record-score-event\nPlayer: ada@example.com\nDay: 2026-08-10\nPoints: 2\nReason: correction")
+
+    def send(_message: EmailMessage) -> str:
+        assert len(state.instructions) == len(state.score_events) == len(state.outbound_messages) == 1
+        return "outcome"
+
+    result = process_manual_score_event_emails(
+        ProcessManualScoreEventEmailsConfig(sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",), oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state),
+        fetch_messages=lambda _query: [message], send_message=send, mark_message_handled=lambda _message_id: None,
+    )
+
+    assert result.processed[0].status == "applied"
+    assert next(iter(state.outbound_messages.values())).status == OUTBOUND_SENT
+
+
+def test_duplicate_manual_score_event_reuses_its_committed_outcome_intent() -> None:
+    state = InMemoryCanonicalState()
+    series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
+    game_day = date(2026, 8, 10)
+    state.publish_game(Game(new_id(), series.id, game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), correct_option="A"))
+    message = ParsedEmailMessage("instruction", "thread", "organizer@example.com", "Correction", datetime(2026, 8, 11, tzinfo=UTC), "Action: record-score-event\nPlayer: ada@example.com\nDay: 2026-08-10\nPoints: 2\nReason: correction")
+    config = ProcessManualScoreEventEmailsConfig(sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",), oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state)
+    sent: list[EmailMessage] = []
+
+    def send(outgoing: EmailMessage) -> str:
+        sent.append(outgoing)
+        return "outcome"
+
+    process_manual_score_event_emails(
+        config, fetch_messages=lambda _query: [message], send_message=send, mark_message_handled=lambda _message_id: None
+    )
+    duplicate = process_manual_score_event_emails(
+        config, fetch_messages=lambda _query: [message], send_message=send, mark_message_handled=lambda _message_id: None
+    )
+
+    assert duplicate.processed[0].status == "skipped_duplicate"
+    assert len(state.score_events) == len(state.outbound_messages) == len(sent) == 1
 
 
 def test_scoring_retains_late_and_superseded_submissions_but_events_link_only_selected_submission() -> None:
@@ -250,6 +294,65 @@ def test_scoring_a_game_twice_does_not_duplicate_automatic_score_events() -> Non
     assert len(state.score_events) == 1
 
 
+def test_successful_scoring_commits_one_pending_organizer_update_intent() -> None:
+    state = InMemoryCanonicalState()
+    game_day = date(2026, 8, 10)
+    game = publish_manual_game(
+        state=state, game_day=game_day,
+        question=Question(game_date=game_day.isoformat(), prompt="Question?", options={"A": "One", "B": "Two", "C": "Three", "D": "Four"}, correct_option="", source_note="", source_url="", source="manual"),
+        message_id="question", published_at=datetime(2026, 8, 10, tzinfo=UTC),
+    )
+    state.set_answer(replace(game, correct_option="A", answer_source_url="https://example.com"))
+
+    result = score_responses(
+        ScoreResponsesConfig(
+            scoring_date=date(2026, 8, 11), game_date=game_day, sender="organizer@example.com", organizer="organizer@example.com",
+            gmail_user="organizer@example.com", oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token",
+            state_store=state, dry_run=True,
+        ),
+        fetch_messages=lambda _query: [],
+    )
+
+    assert state.find_game(day=game_day).status == GAME_SCORED  # type: ignore[union-attr]
+    assert len(state.outbound_messages) == 1
+    outbound = next(iter(state.outbound_messages.values()))
+    assert outbound.status == OUTBOUND_PENDING
+    assert outbound.message_type == "organizer_scoring_update"
+    assert result.organizer_message_id == outbound.id
+
+
+def test_automated_publication_rolls_forward_only_a_scored_game() -> None:
+    state = InMemoryCanonicalState()
+    previous_day = date(2026, 8, 10)
+    game = publish_manual_game(
+        state=state, game_day=previous_day,
+        question=Question(game_date=previous_day.isoformat(), prompt="Previous?", options={"A": "One", "B": "Two", "C": "Three", "D": "Four"}, correct_option="", source_note="Source", source_url="https://example.com", source="manual"),
+        message_id="question", published_at=datetime(2026, 8, 10, tzinfo=UTC),
+    )
+    state.set_answer(replace(game, correct_option="A", answer_source_url="https://example.com"))
+
+    unscored = send_question(
+        SendQuestionConfig(
+            game_date=date(2026, 8, 11), sender="organizer@example.com", gmail_user="organizer@example.com",
+            oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
+            google_group_email="players@example.com", dry_run=True,
+        ),
+        fetch_messages=lambda _query: [],
+    )
+    assert "The Answer on 2026-08-10" not in unscored.email_body
+
+    state.score_game(replace(game, scored_at=datetime(2026, 8, 11, tzinfo=UTC)))
+    scored = send_question(
+        SendQuestionConfig(
+            game_date=date(2026, 8, 12), sender="organizer@example.com", gmail_user="organizer@example.com",
+            oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
+            google_group_email="players@example.com", dry_run=True,
+        ),
+        fetch_messages=lambda _query: [],
+    )
+    assert "The Answer on 2026-08-10 is A" in scored.email_body
+
+
 def test_automatic_scoring_preserves_an_existing_manual_score_event() -> None:
     state = InMemoryCanonicalState()
     game_day = date(2026, 8, 10)
@@ -259,8 +362,8 @@ def test_automatic_scoring_preserves_an_existing_manual_score_event() -> None:
         message_id="question", published_at=datetime(2026, 8, 10, tzinfo=UTC),
     )
     state.set_answer(replace(game, correct_option="A", answer_source_url="https://example.com"))
-    apply_score_adjustment(
-        ScoreAdjustmentConfig(email="ada@example.com", points_delta=2, reason="correction", state_store=state, game_date=game_day)
+    record_manual_score_event(
+        ManualScoreEventConfig(email="ada@example.com", points_delta=2, reason="correction", state_store=state, game_date=game_day)
     )
 
     score_responses(

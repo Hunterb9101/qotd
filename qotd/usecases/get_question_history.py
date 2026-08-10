@@ -47,10 +47,10 @@ def load_question_for_game_date(state: object, game_date: date) -> StoredQuestio
     return question
 
 
-def find_latest_answered_question_before(state: object, game_date: date) -> StoredQuestion | None:
-    """Return the most recent earlier Game with a displayable Answer."""
+def find_latest_scored_question_before(state: object, game_date: date) -> StoredQuestion | None:
+    """Return the most recent earlier scored Game with a displayable Answer."""
 
-    game = _require_canonical_state(state).find_latest_answered_game_before(day=game_date)
+    game = _require_canonical_state(state).find_latest_scored_game_before(day=game_date)
     return stored_question_from_game(game) if game is not None else None
 
 

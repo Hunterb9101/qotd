@@ -101,6 +101,58 @@ class InMemoryCanonicalState(CanonicalState):
         self.instructions[instruction.id] = instruction
         return instruction
 
+    def record_answer_instruction(
+        self,
+        *,
+        instruction: OrganizerInstruction,
+        series: Series,
+        game: Game,
+        outbound_message: OutboundMessage | None = None,
+    ) -> tuple[OrganizerInstruction, Game]:
+        """Atomically record an Answer Instruction and its pending Game."""
+
+        existing_instruction = self.find_organizer_instruction(source_message_key=instruction.source_message_key)
+        if existing_instruction is not None:
+            existing_game = next(
+                (item for item in self.games.values() if item.answer_instruction_id == existing_instruction.id),
+                self.find_game(day=game.day),
+            )
+            if existing_game is None:
+                raise RuntimeError("Answer Instruction committed without its Game")
+            return replace(existing_instruction, status=INSTRUCTION_DUPLICATE), existing_game
+
+        series_before, games_before, instructions_before = self.series.copy(), self.games.copy(), self.instructions.copy()
+        try:
+            existing_series = next((item for item in self.series.values() if item.name == series.name), None)
+            recorded_series = existing_series or series
+            recorded_game = self.set_answer(replace(game, series_id=recorded_series.id))
+            self.series.setdefault(recorded_series.id, recorded_series)
+            self.instructions[instruction.id] = instruction
+            if outbound_message is not None:
+                self.record_outbound_message(outbound_message)
+            return instruction, recorded_game
+        except Exception:
+            self.series, self.games, self.instructions = series_before, games_before, instructions_before
+            raise
+
+    def record_organizer_instruction_outcome(
+        self, *, instruction: OrganizerInstruction, outbound_message: OutboundMessage
+    ) -> OrganizerInstruction:
+        """Atomically record a rejected Instruction and its outcome intent."""
+
+        existing = self.find_organizer_instruction(source_message_key=instruction.source_message_key)
+        if existing is not None:
+            self.record_outbound_message(outbound_message)
+            return replace(existing, status=INSTRUCTION_DUPLICATE)
+        instructions_before, outbound_before = self.instructions.copy(), self.outbound_messages.copy()
+        try:
+            self.instructions[instruction.id] = instruction
+            self.record_outbound_message(outbound_message)
+            return instruction
+        except Exception:
+            self.instructions, self.outbound_messages = instructions_before, outbound_before
+            raise
+
     def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None:
         return next(
             (item for item in self.instructions.values() if item.source_message_key == source_message_key), None
@@ -136,6 +188,13 @@ class InMemoryCanonicalState(CanonicalState):
 
     def find_latest_answered_game_before(self, *, day: date) -> Game | None:
         games = [game for game in self.games.values() if game.day < day and game.correct_option is not None]
+        return max(games, key=lambda game: game.day, default=None)
+
+    def find_latest_scored_game_before(self, *, day: date) -> Game | None:
+        games = [
+            game for game in self.games.values()
+            if game.day < day and game.status == GAME_SCORED and game.correct_option is not None
+        ]
         return max(games, key=lambda game: game.day, default=None)
 
     def find_games_between(self, *, starts_on: date, ends_on: date) -> tuple[Game, ...]:
@@ -240,6 +299,35 @@ class InMemoryCanonicalState(CanonicalState):
         if recorded.status == INSTRUCTION_DUPLICATE:
             return self.record_manual_score_event(event)
         return self.record_manual_score_event(event)
+
+    def record_manual_score_event_instruction(
+        self, *, player: Player, instruction: OrganizerInstruction, event: ScoreEvent, outbound_message: OutboundMessage
+    ) -> tuple[ScoreEvent, bool]:
+        """Atomically persist an Instruction, Manual Score Event, and its outcome intent."""
+
+        existing = self.find_organizer_instruction(source_message_key=instruction.source_message_key)
+        if existing is not None:
+            existing_event = next(
+                (item for item in self.score_events.values() if item.idempotency_key == event.idempotency_key), event
+            )
+            self.record_outbound_message(outbound_message)
+            return existing_event, False
+        players_before = self.players.copy()
+        instructions_before = self.instructions.copy()
+        events_before = self.score_events.copy()
+        outbound_before = self.outbound_messages.copy()
+        try:
+            self.players.setdefault(player.id, player)
+            self.instructions[instruction.id] = instruction
+            self.score_events[event.id] = event
+            self.record_outbound_message(outbound_message)
+            return event, True
+        except Exception:
+            self.players = players_before
+            self.instructions = instructions_before
+            self.score_events = events_before
+            self.outbound_messages = outbound_before
+            raise
 
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage:
         for existing in self.outbound_messages.values():

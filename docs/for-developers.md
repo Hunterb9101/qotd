@@ -52,7 +52,7 @@ Samples draw from the defined trivia categories without repeating one until the 
 Run the offline test suite with:
 
 ```bash
-pytest tests/
+python -m pytest tests/
 ```
 
 Live Answer-interpreter evaluations are in `tests/usecases/test_score_submissions.py`. They use the `intg` pytest marker and run only when explicitly selected:

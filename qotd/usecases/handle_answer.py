@@ -11,8 +11,11 @@ from qotd.domain.canonical import (
     GAME_PENDING,
     INSTRUCTION_APPLIED,
     INSTRUCTION_REJECTED,
+    OUTBOUND_PENDING,
     Game,
     OrganizerInstruction,
+    OutboundMessage,
+    Series,
     gmail_message_key,
     new_id,
 )
@@ -29,10 +32,15 @@ class AnswerInstructionResult:
 
     instruction: OrganizerInstruction
     game: Game | None
+    outbound_message: OutboundMessage | None = None
 
 
 def apply_answer_instruction(
-    *, state: CanonicalState, message: ParsedEmailMessage, processed_at: datetime
+    *,
+    state: CanonicalState,
+    message: ParsedEmailMessage,
+    processed_at: datetime,
+    outcome_recipient: str | None = None,
 ) -> AnswerInstructionResult:
     """Apply one canonical `set-answer` Organizer Instruction idempotently."""
 
@@ -41,24 +49,34 @@ def apply_answer_instruction(
         if payload.action != "set-answer":
             raise ValueError("Organizer Instruction Action must be set-answer")
         return _apply_validated_answer_instruction(
-            state=state, message=message, processed_at=processed_at, payload=payload
+            state=state, message=message, processed_at=processed_at, payload=payload, outcome_recipient=outcome_recipient
         )
     except ValueError as exc:
+        instruction = _new_instruction(
+            message=message, processed_at=processed_at, action=_action_from_message(message.body_text),
+            status=INSTRUCTION_REJECTED, rejection_reason=str(exc),
+        )
+        outbound = _outcome_message(
+            instruction=instruction, message=message, recipient=outcome_recipient, processed_at=processed_at,
+            body=_rejection_body(message=message, reason=str(exc)),
+        )
+        if outbound is not None:
+            instruction = state.record_organizer_instruction_outcome(
+                instruction=instruction, outbound_message=outbound
+            )
+            outbound = state.find_outbound_message(idempotency_key=outbound.idempotency_key)
+        else:
+            instruction = state.record_organizer_instruction(instruction)
         return AnswerInstructionResult(
-            instruction=_record_instruction(
-                state=state,
-                message=message,
-                processed_at=processed_at,
-                action=_action_from_message(message.body_text),
-                status=INSTRUCTION_REJECTED,
-                rejection_reason=str(exc),
-            ),
+            instruction=instruction,
             game=None,
+            outbound_message=outbound,
         )
 
 
 def _apply_validated_answer_instruction(
-    *, state: CanonicalState, message: ParsedEmailMessage, processed_at: datetime, payload: OrganizerInstructionPayload
+    *, state: CanonicalState, message: ParsedEmailMessage, processed_at: datetime,
+    payload: OrganizerInstructionPayload, outcome_recipient: str | None,
 ) -> AnswerInstructionResult:
     """Validate and apply a parsed Answer instruction."""
 
@@ -82,59 +100,98 @@ def _apply_validated_answer_instruction(
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
         raise ValueError("Source URL must be a valid http or https URL")
 
-    instruction = _record_instruction(
-        state=state, message=message, processed_at=processed_at, action=payload.action, status=INSTRUCTION_APPLIED
-    )
-    if instruction.status != INSTRUCTION_APPLIED:
-        existing = state.find_game(day=game_day)
-        return AnswerInstructionResult(instruction=instruction, game=existing)
-
     days_in_month = calendar.monthrange(game_day.year, game_day.month)[1]
-    series = state.create_or_find_series(
+    series = Series(
+        id=new_id(),
         name=game_day.strftime("%Y-%m"),
         starts_on=game_day.replace(day=1),
         ends_on=game_day.replace(day=days_in_month),
+        created_at=processed_at,
+        updated_at=processed_at,
     )
-    game = state.set_answer(
-        Game(
-            id=new_id(),
-            series_id=series.id,
-            day=game_day,
-            status=GAME_PENDING,
-            publication_mode="manual",
-            deadline_at=answer_cutoff_at(next_scoring_day(game_day)),
-            correct_option=correct_option,
-            answer_source_url=source_url,
-            answer_source_note=fields.get("source note"),
-            answer_instruction_id=instruction.id,
-            created_at=processed_at,
-            updated_at=processed_at,
-        )
+    instruction = OrganizerInstruction(
+        id=new_id(),
+        source_message_key=gmail_message_key(message.message_id),
+        sender_email=message.sender_email.strip().lower(),
+        subject=message.subject,
+        received_at=message.sent_at or processed_at,
+        action=payload.action,
+        status=INSTRUCTION_APPLIED,
+        processed_at=processed_at,
     )
-    return AnswerInstructionResult(instruction=instruction, game=game)
+    game = Game(
+        id=new_id(),
+        series_id=series.id,
+        day=game_day,
+        status=GAME_PENDING,
+        publication_mode="manual",
+        deadline_at=answer_cutoff_at(next_scoring_day(game_day)),
+        correct_option=correct_option,
+        answer_source_url=source_url,
+        answer_source_note=fields.get("source note"),
+        answer_instruction_id=instruction.id,
+        created_at=processed_at,
+        updated_at=processed_at,
+    )
+    outbound = _outcome_message(
+        instruction=instruction, message=message, recipient=outcome_recipient, processed_at=processed_at,
+        body=_applied_body(game_day=game_day, correct_option=correct_option, source_url=source_url),
+    )
+    instruction, game = state.record_answer_instruction(
+        instruction=instruction,
+        series=series,
+        game=game,
+        outbound_message=outbound,
+    )
+    if outbound is not None:
+        outbound = state.find_outbound_message(idempotency_key=outbound.idempotency_key)
+    return AnswerInstructionResult(instruction=instruction, game=game, outbound_message=outbound)
 
 
-def _record_instruction(
+def _new_instruction(
     *,
-    state: CanonicalState,
     message: ParsedEmailMessage,
     processed_at: datetime,
     action: str,
     status: str,
     rejection_reason: str | None = None,
 ) -> OrganizerInstruction:
-    return state.record_organizer_instruction(
-        OrganizerInstruction(
-            id=new_id(),
-            source_message_key=gmail_message_key(message.message_id),
-            sender_email=message.sender_email.strip().lower(),
-            subject=message.subject,
-            received_at=message.sent_at or processed_at,
-            action=action,
-            status=status,
-            processed_at=processed_at,
-            rejection_reason=rejection_reason,
-        )
+    return OrganizerInstruction(
+        id=new_id(), source_message_key=gmail_message_key(message.message_id),
+        sender_email=message.sender_email.strip().lower(), subject=message.subject,
+        received_at=message.sent_at or processed_at, action=action, status=status,
+        processed_at=processed_at, rejection_reason=rejection_reason,
+    )
+
+
+def _outcome_message(
+    *, instruction: OrganizerInstruction, message: ParsedEmailMessage, recipient: str | None,
+    processed_at: datetime, body: str,
+) -> OutboundMessage | None:
+    if recipient is None:
+        return None
+    return OutboundMessage(
+        id=new_id(), idempotency_key=f"answer-outcome:{message.message_id}",
+        message_type="organizer_instruction_outcome", recipient=recipient,
+        subject="QOTD Answer instruction result", body_text=body, status=OUTBOUND_PENDING,
+        created_at=processed_at, organizer_instruction_id=instruction.id,
+    )
+
+
+def _applied_body(*, game_day: date, correct_option: str, source_url: str) -> str:
+    return (
+        "Applied Answer instruction.\n\n"
+        f"Day: {game_day.isoformat()}\nCorrect option: {correct_option}\n"
+        f"Source URL: {source_url}\nIdempotency key: Gmail message identity\n"
+    )
+
+
+def _rejection_body(*, message: ParsedEmailMessage, reason: str) -> str:
+    return (
+        "Answer instruction rejected.\n\n"
+        f"Message: {message.message_id}\nReason: {reason}\n\n"
+        "Expected template:\nAction: set-answer\nDay: 2026-07-08\n"
+        "Correct option: C\nSource URL: https://example.com/source-for-answer\n"
     )
 
 

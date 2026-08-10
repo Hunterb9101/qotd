@@ -14,10 +14,10 @@ from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.external.email.gmail import search_messages
 from qotd.usecases.set_answer import ANSWER_INSTRUCTION_QUERY, ProcessSetAnswerEmailsConfig, process_set_answer_emails
 from qotd.usecases.adjust_score import (
-    ProcessScoreAdjustmentEmailsConfig,
-    ScoreAdjustmentConfig,
-    apply_score_adjustment,
-    process_score_adjustment_emails,
+    ManualScoreEventConfig,
+    ProcessManualScoreEventEmailsConfig,
+    process_manual_score_event_emails,
+    record_manual_score_event,
 )
 from qotd.usecases.score_submissions import (
     LLMAnswerInterpreter,
@@ -362,8 +362,8 @@ def main() -> None:
             oauth_refresh_token=args.oauth_refresh_token,
         )
 
-        adjustment_result = apply_score_adjustment(
-            ScoreAdjustmentConfig(
+        score_event_result = record_manual_score_event(
+            ManualScoreEventConfig(
                 email=args.email,
                 game_date=args.game_date,
                 series=args.series,
@@ -375,13 +375,13 @@ def main() -> None:
                 dry_run=args.dry_run,
             )
         )
-        status = "Would apply" if args.dry_run and adjustment_result.applied else "Applied"
-        if not adjustment_result.applied:
+        status = "Would record" if args.dry_run and score_event_result.applied else "Recorded"
+        if not score_event_result.applied:
             status = "Skipped duplicate"
         print(
-            f"{status} adjustment {adjustment_result.adjustment.idempotency_key}: "
-            f"{adjustment_result.monthly_score.email} is now "
-            f"{adjustment_result.monthly_score.points} points in {adjustment_result.monthly_score.series}"
+            f"{status} Manual Score Event {score_event_result.manual_score_event.idempotency_key}: "
+            f"{score_event_result.player_score.email} has Score "
+            f"{score_event_result.player_score.points} in Series {score_event_result.player_score.series}"
         )
 
     elif args.command == "process-score-events":
@@ -396,8 +396,8 @@ def main() -> None:
         )
         organizers = tuple(args.organizer) or (args.sender,)
 
-        processing_result = process_score_adjustment_emails(
-            ProcessScoreAdjustmentEmailsConfig(
+        processing_result = process_manual_score_event_emails(
+            ProcessManualScoreEventEmailsConfig(
                 sender=args.sender,
                 gmail_user=args.gmail_user,
                 organizer_emails=organizers,
@@ -414,8 +414,8 @@ def main() -> None:
             f"Processed {len(processing_result.processed)} manual Score Event instructions "
             f"for query: {processing_result.searched_query}"
         )
-        for adjustment_item in processing_result.processed:
-            print(f"- {adjustment_item.message_id}: {adjustment_item.status} ({adjustment_item.response_message_id})")
+        for score_event_item in processing_result.processed:
+            print(f"- {score_event_item.message_id}: {score_event_item.status} ({score_event_item.response_message_id})")
 
     elif args.command == "process-set-answers":
         require_sender_options(args)

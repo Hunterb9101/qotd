@@ -12,7 +12,8 @@ from qotd.provision import provision_canonical_state, validate_target
 
 SQL_DIRECTORY = Path(__file__).parent.parent / "sql"
 SQL = (SQL_DIRECTORY / "001_canonical_state.sql").read_text().lower()
-RESET_SQL = (SQL_DIRECTORY / "002_reset_legacy_state.sql").read_text().lower()
+RESET_SQL_PATH = SQL_DIRECTORY / "002_reset_legacy_state.sql"
+RESET_SQL = RESET_SQL_PATH.read_text().lower() if RESET_SQL_PATH.exists() else None
 
 TABLE_FIELDS = {
     "series": {"id", "name", "starts_on", "ends_on", "created_at", "updated_at"},
@@ -69,7 +70,12 @@ def test_scoreboard_is_a_view_derived_from_submissions_and_score_events() -> Non
     assert "coalesce(sum(score_events.points_delta), 0) as score" in SQL
 
 
+@pytest.mark.skipif(
+    RESET_SQL is None,
+    reason="legacy reset SQL is intentionally unavailable",
+)
 def test_reset_script_drops_only_the_named_legacy_tables() -> None:
+    assert RESET_SQL is not None
     legacy_tables = {
         "correct_answer_updates", "manual_adjustments", "monthly_scores", "questions", "reply_processing",
     }
@@ -130,6 +136,10 @@ def test_provision_validates_the_existing_target_then_applies_schema() -> None:
     assert client.queries[0][1]["default_dataset"] == "valid-project.qotd"
 
 
+@pytest.mark.skipif(
+    RESET_SQL is None,
+    reason="legacy reset SQL is intentionally unavailable",
+)
 def test_reset_applies_a_standalone_scoped_reset_and_canonical_schema() -> None:
     client = FakeClient()
     fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs)

@@ -18,7 +18,7 @@ from qotd.external.email.runtime import build_player_email, search_messages, sen
 from qotd.external.storage.canonical import CanonicalState
 from qotd.usecases.check_manual_question import MessageFetcher, check_manual_question
 from qotd.usecases.publish_game import publish_automated_game
-from qotd.usecases.get_question_history import find_latest_answered_question_before, stored_question_from_game
+from qotd.usecases.get_question_history import find_latest_scored_question_before, stored_question_from_game
 from qotd.usecases.get_score_history import PlayerResults, load_player_results
 from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
@@ -138,7 +138,7 @@ def send_question(
     else:
         question = config.question_generator(config.game_date, config.state_store)
     validate_question(question)
-    previous_question = find_latest_answered_question_before(state, config.game_date)
+    previous_question = find_latest_scored_question_before(state, config.game_date)
     player_results = (
         load_player_results(state, date.fromisoformat(previous_question.game_date))
         if previous_question is not None

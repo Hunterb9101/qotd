@@ -97,7 +97,7 @@ class StoredQuestion:
         return asdict(self)
 @dataclass(frozen=True)
 class ScoreboardLine:
-    """Persisted monthly score total for one participant."""
+    """One Player's Score in a Series, as shown on the Scoreboard."""
 
     series: str
     email: str
@@ -128,7 +128,7 @@ class SubmissionCandidate:
 
 @dataclass(frozen=True)
 class ManualScoreEvent:
-    """Persisted manual score adjustment."""
+    """Persisted manual Score Event created by an Organizer Instruction."""
 
     series: str
     email: str

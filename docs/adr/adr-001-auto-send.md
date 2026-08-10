@@ -1,6 +1,6 @@
 # ADR-001: Automated Participant Email Delivery
 
-- Status: Accepted
+- Status: Superseded in part by ADR-004
 - Date: 2026-07-18
 
 ## Context
@@ -50,7 +50,14 @@ The Group will be configured so that:
 - conversation history and member visibility are private;
 - the standard Google Groups subscription footer is enabled.
 
-Google Contacts will not be used. Any reply correlated to the applicable QOTD is eligible for scoring. BigQuery will provide a monthly activity roster: only participants with a positive score in the current `MMYY` series appear in standings and count as potential non-respondents. An incorrect answer is retained in reply-processing history but does not create an automated monthly score row. A participant enters or rejoins the monthly roster upon earning a point and naturally leaves it at the next monthly rollover until earning another point. Manual adjustments may retain a zero-point row as an append-only correction, but zero and negative totals are excluded from the activity roster.
+Google Contacts will not be used. Any reply correlated to the applicable QOTD
+is eligible for scoring. The Scoreboard and activity-roster portion of this
+decision is superseded by [ADR-004](adr-004-canonical-state-model.md) and the
+[QOTD Definitions](../DEFINITIONS.md): the Scoreboard includes every Player
+with a Submission or Score Event in the current Series, including zero and
+negative Scores, and non-respondent reporting uses that Scoreboard. An
+incorrect answer is retained in reply-processing history but does not create an
+automated Score Event.
 
 Manual questions will continue to be sent from the QOTD Gmail account with the exact dated subject, preserving existing sent-mail detection.
 
@@ -58,6 +65,10 @@ Manual questions will continue to be sent from the QOTD Gmail account with the e
 
 The participant experience remains email-based and no paid domain or mailbox is required. Automated Gmail sends have one Group recipient instead of a multi-recipient Bcc pattern, and participants gain an explicit invitation and built-in subscription controls.
 
-Group membership is the only participant list the organizer maintains. QOTD does not validate an empty Group or enumerate its members. A new or returning member who has not yet earned a current-month point will not appear in standings or non-respondent reporting. A member with positive points who stops responding can remain in non-respondent reporting through the end of that month; the next monthly series removes them automatically.
+Group membership is the only Player list the Organizer maintains. QOTD does
+not validate an empty Group or enumerate its members. A Player appears in the
+current Series Scoreboard and non-respondent reporting after making a
+Submission or receiving a Score Event in that Series. The next monthly Series
+starts with a new Scoreboard.
 
 Google Groups still enforces its own spam and content policies, so this decision reduces but does not eliminate platform enforcement risk. If Group delivery becomes unreliable or list synchronization becomes burdensome, the decision should be revisited in favor of a provider with first-class outbound and inbound application email support.

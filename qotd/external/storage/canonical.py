@@ -30,6 +30,21 @@ class CanonicalState(ABC):
     def record_organizer_instruction(self, instruction: OrganizerInstruction) -> OrganizerInstruction: ...
 
     @abstractmethod
+    def record_answer_instruction(
+        self,
+        *,
+        instruction: OrganizerInstruction,
+        series: Series,
+        game: Game,
+        outbound_message: OutboundMessage | None = None,
+    ) -> tuple[OrganizerInstruction, Game]: ...
+
+    @abstractmethod
+    def record_organizer_instruction_outcome(
+        self, *, instruction: OrganizerInstruction, outbound_message: OutboundMessage
+    ) -> OrganizerInstruction: ...
+
+    @abstractmethod
     def find_organizer_instruction(self, *, source_message_key: str) -> OrganizerInstruction | None: ...
 
     @abstractmethod
@@ -40,6 +55,9 @@ class CanonicalState(ABC):
 
     @abstractmethod
     def find_latest_answered_game_before(self, *, day: date) -> Game | None: ...
+
+    @abstractmethod
+    def find_latest_scored_game_before(self, *, day: date) -> Game | None: ...
 
     @abstractmethod
     def find_games_between(self, *, starts_on: date, ends_on: date) -> tuple[Game, ...]: ...
@@ -70,6 +88,16 @@ class CanonicalState(ABC):
 
     @abstractmethod
     def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent: ...
+
+    @abstractmethod
+    def record_manual_score_event_instruction(
+        self,
+        *,
+        player: Player,
+        instruction: OrganizerInstruction,
+        event: ScoreEvent,
+        outbound_message: OutboundMessage,
+    ) -> tuple[ScoreEvent, bool]: ...
 
     @abstractmethod
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage: ...

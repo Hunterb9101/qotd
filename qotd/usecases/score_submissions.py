@@ -337,6 +337,7 @@ def score_responses(
         state=config.state_store, game=game, replies=replies, collected_at=datetime.now(UTC)
     )
     events: list[ScoreEvent] = []
+    scored_event_emails: list[tuple[ScoreEvent, str]] = []
     correct: list[ScoredReply] = []
     incorrect: list[ScoredReply] = []
     needs_review: list[ScoredReply] = []
@@ -367,10 +368,9 @@ def score_responses(
             needs_review=interpretation.needs_review,
         )
         (needs_review if interpretation.needs_review else correct if points else incorrect).append(scored_reply)
-    config.state_store.score_game(replace(game, scored_at=datetime.now(UTC)), score_events=tuple(events))
-    standings = tuple(
-        ScoreboardLine(series=game.day.strftime("%m%y"), email=entry.email, points=entry.score)
-        for entry in config.state_store.read_scoreboard(series_id=game.series_id)
+        scored_event_emails.append((event, email))
+    standings = _scoreboard_after_events(
+        state=config.state_store, game=game, scored_event_emails=scored_event_emails,
     )
     scoring = ScoringResult(
         game_date=question.game_date,
@@ -381,11 +381,58 @@ def score_responses(
         standings=standings,
     )
     body = build_organizer_update_body(question, scoring)
+    update_key = f"scoring-update:{game.id}"
+    existing_intent = config.state_store.find_outbound_message(idempotency_key=update_key)
+    intent = existing_intent or OutboundMessage(
+        id=new_id(),
+        idempotency_key=update_key,
+        message_type="organizer_scoring_update",
+        recipient=config.organizer,
+        subject=f"QOTD scoring update - {game_date.isoformat()}",
+        body_text=body,
+        status=OUTBOUND_PENDING,
+        created_at=datetime.now(UTC),
+        game_id=game.id,
+    )
+    config.state_store.score_game(
+        replace(game, scored_at=datetime.now(UTC)),
+        score_events=tuple(events),
+        outbound_messages=() if existing_intent is not None else (intent,),
+    )
+    if config.dry_run:
+        organizer_message_id = intent.id
+    else:
+        assert fetch_messages is not None
+        organizer_message_id = deliver_outbound_message(
+            state=config.state_store,
+            intent=intent,
+            sender=config.sender,
+            fetch_messages=fetch_messages,
+            send_message=lambda message: send_gmail_message(
+                message, user_id=config.gmail_user, oauth_client_id=config.oauth_client_id,
+                oauth_client_secret=config.oauth_client_secret, oauth_refresh_token=config.oauth_refresh_token,
+            ),
+            is_new=existing_intent is None,
+        )
     return ScoreResponsesResult(
         question=question,
         scoring=scoring,
         reply_count=len(replies),
         organizer_update_body=body,
-        organizer_message_id=f"canonical:{game.id}",
+        organizer_message_id=organizer_message_id,
         gmail_query=query,
+    )
+
+
+def _scoreboard_after_events(
+    *, state: CanonicalState, game: Game, scored_event_emails: list[tuple[ScoreEvent, str]],
+) -> tuple[ScoreboardLine, ...]:
+    """Render the Scoreboard that the scoring transaction will commit."""
+
+    scores = {entry.email: entry.score for entry in state.read_scoreboard(series_id=game.series_id)}
+    for event, email in scored_event_emails:
+        scores[email] = scores.get(email, 0) + event.points_delta
+    return tuple(
+        ScoreboardLine(series=game.day.strftime("%m%y"), email=email, points=points)
+        for email, points in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     )

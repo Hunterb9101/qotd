@@ -187,6 +187,7 @@ def process_set_answer_emails(
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
         update_result: SetAnswerResult | None = None
         instruction_id: str | None = None
+        outcome_intent: OutboundMessage | None = None
         error: str | None = None
         if sender_email not in approved_senders:
             error = f"sender is not approved: {sender_email}"
@@ -196,8 +197,10 @@ def process_set_answer_emails(
                     state=state,
                     message=message,
                     processed_at=datetime.now(UTC),
+                    outcome_recipient=None if config.dry_run else sender_email,
                 )
                 instruction_id = canonical_result.instruction.id
+                outcome_intent = canonical_result.outbound_message
                 if canonical_result.instruction.status == "rejected":
                     error = canonical_result.instruction.rejection_reason or "Organizer Instruction rejected"
                 else:
@@ -220,16 +223,18 @@ def process_set_answer_emails(
         if not config.dry_run:
             outcome_key = f"answer-outcome:{message.message_id}"
             existing_intent = state.find_outbound_message(idempotency_key=outcome_key)
-            intent = existing_intent or state.record_outbound_message(
-                OutboundMessage(
-                    id=new_id(), idempotency_key=outcome_key, message_type="organizer_instruction_outcome",
-                    recipient=sender_email, subject=str(response["Subject"]), body_text=response_body,
-                    status=OUTBOUND_PENDING, created_at=datetime.now(UTC), organizer_instruction_id=instruction_id,
+            intent = outcome_intent or existing_intent
+            if intent is None:
+                intent = state.record_outbound_message(
+                    OutboundMessage(
+                        id=new_id(), idempotency_key=outcome_key, message_type="organizer_instruction_outcome",
+                        recipient=sender_email, subject=str(response["Subject"]), body_text=response_body,
+                        status=OUTBOUND_PENDING, created_at=datetime.now(UTC), organizer_instruction_id=instruction_id,
+                    )
                 )
-            )
             response_message_id = deliver_outbound_message(
                 state=state, intent=intent, sender=config.sender, fetch_messages=fetch, send_message=send,
-                is_new=existing_intent is None,
+                is_new=outcome_intent is not None and canonical_result.instruction.status != "duplicate",
             )
             mark_handled(message.message_id)
         processed.append(

@@ -8,7 +8,7 @@ import pytest
 
 from datetime import UTC, date, datetime
 
-from qotd.domain.canonical import GAME_PUBLISHED, Game, ScoreEvent, Submission
+from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, OUTBOUND_PENDING, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission
 from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS
 
 
@@ -162,11 +162,52 @@ def test_score_game_writes_game_events_and_outbound_intents_in_one_transaction()
     assert isinstance(config, dict)
 
 
+def test_record_answer_instruction_writes_instruction_series_and_game_in_one_transaction() -> None:
+    now = datetime(2026, 8, 9, tzinfo=UTC)
+    instruction = OrganizerInstruction(
+        "instruction-1", "message-key", "organizer@example.com", "Answer", now, "set-answer", "applied", now
+    )
+    series = Series("series-1", "2026-08", date(2026, 8, 1), date(2026, 8, 31), now, now)
+    game = Game(
+        "game-1", series.id, date(2026, 8, 10), GAME_PENDING, "manual", now, now, now,
+        correct_option="A", answer_instruction_id=instruction.id,
+    )
+    outbound = OutboundMessage(
+        "outbound-1", "answer-outcome:message-key", "organizer_instruction_outcome", "organizer@example.com",
+        "QOTD Answer instruction result", "Applied Answer instruction.", OUTBOUND_PENDING, now,
+        organizer_instruction_id=instruction.id,
+    )
+    client = FakeClient([[], [instruction.__dict__]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(
+        QueryJobConfig=lambda **kwargs: kwargs,
+        ScalarQueryParameter=FakeScalarQueryParameter,
+    )
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        recorded_instruction, recorded_game = adapter.record_answer_instruction(
+            instruction=instruction, series=series, game=game, outbound_message=outbound
+        )
+
+    sql, _ = client.calls[0]
+    assert sql.count("BEGIN TRANSACTION;") == 1
+    assert "MERGE `project-id.qotd.organizer_instructions`" in sql
+    assert "MERGE `project-id.qotd.series`" in sql
+    assert "MERGE `project-id.qotd.games`" in sql
+    assert "INSERT INTO `project-id.qotd.outbound_messages`" in sql
+    assert "WHERE instruction_is_new" in sql
+    assert "instruction_is_new" in sql
+    assert recorded_instruction == instruction
+    assert recorded_game == game
+
+
 def test_canonical_mutations_do_not_delegate_to_append_load_jobs() -> None:
     mutations = (
         BQAdapter.create_or_find_player,
         BQAdapter.create_or_find_series,
         BQAdapter.record_organizer_instruction,
+        BQAdapter.record_answer_instruction,
+        BQAdapter.record_organizer_instruction_outcome,
         BQAdapter.record_submission,
         BQAdapter.publish_game,
         BQAdapter.set_answer,
