@@ -3,7 +3,7 @@ QOTD scoring update for {{ question.game_date }}
 Question:
 {{ question.prompt }}
 
-Correct answer: {{ question.correct_option }}. {{ question.options[question.correct_option] }}
+Answer: {{ question.correct_option }}. {{ question.options[question.correct_option] }}
 Source: {{ question.source_url }}
 
 Correct replies:
@@ -23,10 +23,10 @@ Incorrect replies:
 Needs review:
 {% for reply in result.needs_review -%}
 - {{ reply.email }}: {{ reply.interpreted_option }}
-  Adjustment template:
-  Action: adjust-score
-  Participant: {{ reply.email }}
-  Game date: {{ question.game_date }}
+  Manual Score Event template:
+  Action: record-score-event
+  Player: {{ reply.email }}
+  Day: {{ question.game_date }}
   Points: 1
   Reason: unclear_answer_accepted
   Gmail message ID: {{ reply.gmail_message_id }}
@@ -34,14 +34,14 @@ Needs review:
 - None
 {% endfor %}
 
-No response from current-month scorers:
+No response from current-Series scorers:
 {% for email in result.no_response -%}
 - {{ email }}
 {% else -%}
 - None
 {% endfor %}
 
-Current standings:
+Current Scoreboard:
 {% for score in result.standings -%}
 - {{ score.email }}: {{ score.points }}
 {% else -%}
@@ -49,14 +49,14 @@ Current standings:
 {% endfor %}
 {% if is_final_weekday %}
 
-Monthly winner announcement:
+Series Winner announcement:
 {% for winner in winners -%}
 - {{ winner.email }} with {{ winner.points }} points
 {% else -%}
-- No scored participants this month
+- No scored Players in this Series
 {% endfor %}
 
-Next scoring day starts a new monthly score bucket automatically.
+Next scoring day starts a new Series Scoreboard automatically.
 {% endif %}
 {% if result.skipped_processing_keys %}
 

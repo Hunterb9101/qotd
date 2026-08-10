@@ -7,11 +7,11 @@ from datetime import date
 from email.message import EmailMessage
 
 from qotd.domain.dates import is_final_weekday_of_month, question_subject
-from qotd.domain.models import OPTION_LABELS, MonthlyScore, Question, StoredQuestion
+from qotd.domain.models import OPTION_LABELS, ScoreboardLine, Question, StoredQuestion
 from qotd.presentation.rendering import render_template
 
 
-def build_participant_email(
+def build_player_email(
     question: Question,
     sender: str,
     recipients: Sequence[str] = (),
@@ -19,12 +19,12 @@ def build_participant_email(
     delivery_address: str | None = None,
     previous_question: StoredQuestion | None = None,
     point_earners: Sequence[str] = (),
-    standings: Sequence[MonthlyScore] = (),
+    standings: Sequence[ScoreboardLine] = (),
 ) -> EmailMessage:
-    """Build the participant-facing QOTD email without answer metadata."""
+    """Build the Player-facing QOTD email without Answer metadata."""
 
     if not delivery_address and not recipients:
-        raise ValueError("participant email must have a delivery address")
+        raise ValueError("Player email must have a delivery address")
 
     message = EmailMessage()
     if delivery_address:
@@ -47,7 +47,7 @@ def build_participant_email(
     )
     message.set_content(
         render_template(
-            "participant_email.txt.j2",
+            "player_email.txt.j2",
             is_month_end_recap=is_month_end_recap,
             monthly_winners=monthly_winners,
             option_labels=OPTION_LABELS,
