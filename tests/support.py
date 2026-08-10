@@ -200,7 +200,13 @@ class InMemoryCanonicalState(CanonicalState):
     def find_games_between(self, *, starts_on: date, ends_on: date) -> tuple[Game, ...]:
         return tuple(game for game in self.games.values() if starts_on <= game.day <= ends_on)
 
-    def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
+    def publish_game(
+        self, game: Game, *, series: Series | None = None, outbound_message: OutboundMessage | None = None
+    ) -> Game:
+        if series is not None:
+            canonical_series = next((item for item in self.series.values() if item.name == series.name), series)
+            self.series.setdefault(canonical_series.id, canonical_series)
+            game = replace(game, series_id=canonical_series.id)
         for existing in self.games.values():
             if existing.day == game.day:
                 if existing.status != "pending":
@@ -230,9 +236,11 @@ class InMemoryCanonicalState(CanonicalState):
             if game.day == day and game.status == "pending":
                 del self.games[game_id]
 
-    def replace_pending_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
+    def replace_pending_game(
+        self, game: Game, *, series: Series | None = None, outbound_message: OutboundMessage | None = None
+    ) -> Game:
         self.discard_pending_game(day=game.day)
-        return self.publish_game(game, outbound_message=outbound_message)
+        return self.publish_game(game, series=series, outbound_message=outbound_message)
 
     def set_answer(self, game: Game) -> Game:
         current = self.games.get(game.id)
@@ -294,11 +302,15 @@ class InMemoryCanonicalState(CanonicalState):
         self.score_events[event.id] = event
         return event
 
-    def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent:
+    def record_instruction_score_event(
+        self, *, player: Player, instruction: OrganizerInstruction, event: ScoreEvent
+    ) -> ScoreEvent:
+        existing_player = next((item for item in self.players.values() if item.email == player.email), player)
         recorded = self.record_organizer_instruction(instruction)
         if recorded.status == INSTRUCTION_DUPLICATE:
-            return self.record_manual_score_event(event)
-        return self.record_manual_score_event(event)
+            return self.record_manual_score_event(replace(event, player_id=existing_player.id))
+        self.players.setdefault(existing_player.id, existing_player)
+        return self.record_manual_score_event(replace(event, player_id=existing_player.id))
 
     def record_manual_score_event_instruction(
         self, *, player: Player, instruction: OrganizerInstruction, event: ScoreEvent, outbound_message: OutboundMessage
@@ -317,11 +329,13 @@ class InMemoryCanonicalState(CanonicalState):
         events_before = self.score_events.copy()
         outbound_before = self.outbound_messages.copy()
         try:
-            self.players.setdefault(player.id, player)
+            recorded_player = next((item for item in self.players.values() if item.email == player.email), player)
+            self.players.setdefault(recorded_player.id, recorded_player)
             self.instructions[instruction.id] = instruction
-            self.score_events[event.id] = event
+            recorded_event = replace(event, player_id=recorded_player.id)
+            self.score_events[recorded_event.id] = recorded_event
             self.record_outbound_message(outbound_message)
-            return event, True
+            return recorded_event, True
         except Exception:
             self.players = players_before
             self.instructions = instructions_before

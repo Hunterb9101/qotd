@@ -4,13 +4,17 @@ This guide covers production setup and the human workflows used to operate QOTD.
 
 ## Production Schedule
 
-GitHub Actions runs the weekday game on the following schedule:
+GitHub Actions runs the weekday game on the following schedule in
+`America/Denver` time:
 
-- 6 AM PDT: Player Submission cutoff
-- 7 AM PDT: scoring summary sent to the organizer
-- 2 PM PDT: Question sent to Players
+- 7 AM: Player Submission cutoff
+- 8 AM: scoring update sent to the Organizer
+- noon: Question sent to Players
 
-The management-email workflow runs at `13:55 UTC`, five minutes before the scoring workflow. It processes Answer instructions first and manual Score Event instructions second. Both workflows share a concurrency group so their state writes do not overlap.
+The management-email workflow runs at `13:55 UTC` (7:55 AM during daylight
+time and 6:55 AM during standard time). It processes Answer instructions first
+and Manual Score Event instructions second. Both workflows share a concurrency
+group so their state writes do not overlap.
 
 ## Email and Players
 

@@ -49,6 +49,8 @@ def deliver_outbound_message(
         message["To"] = intent.recipient
         message["From"] = sender
         message["Subject"] = intent.subject
+        if intent.message_type == "question_publication":
+            message["Reply-To"] = sender
         message.set_content(intent.body_text)
         message_id = send_message(message)
         sent_at = datetime.now(UTC)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -365,8 +365,11 @@ class BQAdapter(CanonicalState):
         )
         return tuple(Game(**row) for row in rows)
 
-    def publish_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
-        values = asdict(game)
+    def publish_game(
+        self, game: Game, *, series: Series | None = None, outbound_message: OutboundMessage | None = None
+    ) -> Game:
+        published = replace(game, status="published")
+        values = asdict(published)
         fields = tuple(values)
         source_fields = ", ".join(
             f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
@@ -382,7 +385,10 @@ class BQAdapter(CanonicalState):
             for field in fields
             if field not in {"id", "series_id", "day", "created_at"}
         )
-        statement = f"""
+        series_statement, series_values, source_fields = self._publication_series_statement(
+            series, source_fields, series_table=self.table("series")
+        )
+        statement = series_statement + f"""
             MERGE `{self.table("games")}` AS target
             USING (SELECT {source_fields}) AS source
             ON target.day = source.day
@@ -399,7 +405,8 @@ class BQAdapter(CanonicalState):
             """
             values.update(outbound)
         statement += f"SELECT * FROM `{self.table('games')}` WHERE day = @day;"
-        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=game)
+        values.update(series_values)
+        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=published)
 
     def set_answer(self, game: Game) -> Game:
         values = asdict(game)
@@ -433,16 +440,24 @@ class BQAdapter(CanonicalState):
         statement = f"DELETE FROM `{self.table('games')}` WHERE day = @day AND status = 'pending';"
         self.transaction_rows(statement, self._parameters({"day": day}))
 
-    def replace_pending_game(self, game: Game, *, outbound_message: OutboundMessage | None = None) -> Game:
-        values = asdict(game)
+    def replace_pending_game(
+        self, game: Game, *, series: Series | None = None, outbound_message: OutboundMessage | None = None
+    ) -> Game:
+        series_table = self.table('series')
+        game_table = self.table("games")
+        published = replace(game, status="published")
+        values = asdict(published)
         fields = ", ".join(values)
         source_fields = ", ".join(
             f"PARSE_JSON(@{field}) AS {field}" if isinstance(values[field], dict) else f"@{field} AS {field}"
             for field in values
         )
-        statement = f"""
-            DELETE FROM `{self.table('games')}` WHERE day = @day AND status = 'pending';
-            INSERT INTO `{self.table('games')}` ({fields}) SELECT {", ".join(f"source.{field}" for field in values)}
+        series_statement, series_values, source_fields = self._publication_series_statement(
+            series, source_fields, series_table=series_table
+        )
+        statement = series_statement + f"""
+            DELETE FROM `{game_table}` WHERE day = @day AND status = 'pending';
+            INSERT INTO `{game_table}` ({fields}) SELECT {", ".join(f"source.{field}" for field in values)}
             FROM (SELECT {source_fields}) AS source
             WHERE NOT EXISTS (SELECT 1 FROM `{self.table('games')}` WHERE day = @day);
         """
@@ -455,8 +470,30 @@ class BQAdapter(CanonicalState):
                 WHERE NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
             """
             values.update(outbound)
-        statement += f"SELECT * FROM `{self.table('games')}` WHERE day = @day;"
-        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=game)
+        statement += f"SELECT * FROM `{game_table}` WHERE day = @day;"
+        values.update(series_values)
+        return self._game_from_rows(self.transaction_rows(statement, self._parameters(values)), fallback=published)
+
+    def _publication_series_statement(
+        self, series: Series | None, source_fields: str, *, series_table: str
+    ) -> tuple[str, dict[str, Any], str]:
+        """Return the Series merge and Game source fields for one publication transaction."""
+
+        if series is None:
+            return "", {}, source_fields
+        values = {f"series_{key}": value for key, value in asdict(series).items()}
+        fields = tuple(asdict(series))
+        game_source_fields = source_fields.replace(
+            "@series_id AS series_id",
+            f"(SELECT id FROM `{series_table}` WHERE name = @series_name) AS series_id",
+        )
+        statement = f"""
+            MERGE `{series_table}` AS target
+            USING (SELECT {', '.join(f'@series_{field} AS {field}' for field in fields)}) AS source
+            ON target.name = source.name
+            WHEN NOT MATCHED THEN INSERT ({', '.join(fields)}) VALUES ({', '.join(f'source.{field}' for field in fields)});
+        """
+        return statement, values, game_source_fields
 
     def score_game(
         self,
@@ -526,7 +563,10 @@ class BQAdapter(CanonicalState):
         self._merge_record(table_name="score_events", key="idempotency_key", values=asdict(event))
         return event
 
-    def record_instruction_score_event(self, *, instruction: OrganizerInstruction, event: ScoreEvent) -> ScoreEvent:
+    def record_instruction_score_event(
+        self, *, player: Player, instruction: OrganizerInstruction, event: ScoreEvent
+    ) -> ScoreEvent:
+        player_values = {f"player_{key}": value for key, value in asdict(player).items()}
         instruction_values = {f"instruction_{key}": value for key, value in asdict(instruction).items()}
         event_values = {f"event_{key}": value for key, value in asdict(event).items()}
         statement = f"""
@@ -534,17 +574,21 @@ class BQAdapter(CanonicalState):
                 SELECT 1 FROM `{self.table('organizer_instructions')}`
                 WHERE source_message_key = @instruction_source_message_key
             );
+            MERGE `{self.table('players')}` AS target
+            USING (SELECT {', '.join(f'@player_{field} AS {field}' for field in asdict(player))}) AS source
+            ON target.email = source.email
+            WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(player))}) VALUES ({', '.join(f'source.{field}' for field in asdict(player))});
             MERGE `{self.table('organizer_instructions')}` AS target
             USING (SELECT {', '.join(f'@instruction_{field} AS {field}' for field in asdict(instruction))}) AS source
             ON target.source_message_key = source.source_message_key
             WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
             INSERT INTO `{self.table('score_events')}` ({', '.join(asdict(event))})
-            SELECT {', '.join(f'@event_{field}' for field in asdict(event))}
+            SELECT {', '.join(f'@event_{field}' if field != 'player_id' else '(SELECT id FROM `' + self.table('players') + '` WHERE email = @player_email)' for field in asdict(event))}
             WHERE instruction_is_new
               AND NOT EXISTS (SELECT 1 FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key);
             SELECT * FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key;
         """
-        rows = self.transaction_rows(statement, self._parameters({**instruction_values, **event_values}))
+        rows = self.transaction_rows(statement, self._parameters({**player_values, **instruction_values, **event_values}))
         return ScoreEvent(**rows[0]) if rows else event
 
     def record_manual_score_event_instruction(

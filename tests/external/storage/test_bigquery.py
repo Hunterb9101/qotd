@@ -201,6 +201,61 @@ def test_record_answer_instruction_writes_instruction_series_and_game_in_one_tra
     assert recorded_game == game
 
 
+def test_automated_publication_transaction_persists_a_published_game() -> None:
+    """Automated delivery is a publication transition, never a pending Game."""
+
+    now = datetime(2026, 8, 10, tzinfo=UTC)
+    game = Game(
+        "game-1", "series-1", date(2026, 8, 10), GAME_PENDING, "automated", now, now, now,
+        correct_option="A",
+    )
+    client = FakeClient([[]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(
+        QueryJobConfig=lambda **kwargs: kwargs,
+        ScalarQueryParameter=FakeScalarQueryParameter,
+    )
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        published = adapter.replace_pending_game(game)
+
+    sql, config = client.calls[0]
+    assert isinstance(config, dict)
+    assert published.status == GAME_PUBLISHED
+    assert "INSERT INTO `project-id.qotd.games`" in sql
+    assert any(
+        parameter.name == "status" and parameter.value == GAME_PUBLISHED
+        for parameter in config["query_parameters"]
+    )
+
+
+def test_publication_transition_merges_series_with_its_game_in_one_bq_script() -> None:
+    """A publication cannot leave a prerequisite Series committed by itself."""
+
+    source = inspect.getsource(BQAdapter.replace_pending_game)
+    assert "self.table('series')" in source
+    assert source.index("self.table('series')") < source.index('self.table("games")')
+
+    from qotd.usecases import publish_game
+
+    assert "create_or_find_series" not in inspect.getsource(publish_game._publication_game)
+
+
+def test_manual_score_event_transition_merges_player_with_instruction_event_and_outbound() -> None:
+    """A Manual Score Event cannot leave a prerequisite Player committed by itself."""
+
+    source = inspect.getsource(BQAdapter.record_manual_score_event_instruction)
+    assert source.count("MERGE `") >= 3
+    assert "self.table('players')" in source
+    assert "self.table('organizer_instructions')" in source
+    assert "self.table('score_events')" in source
+    assert "self.table('outbound_messages')" in source
+
+    from qotd.usecases import record_score_event
+
+    assert "create_or_find_player" not in inspect.getsource(record_score_event.record_score_event)
+
+
 def test_canonical_mutations_do_not_delegate_to_append_load_jobs() -> None:
     mutations = (
         BQAdapter.create_or_find_player,

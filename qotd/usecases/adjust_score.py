@@ -59,7 +59,7 @@ class ManualScoreEventResult:
 class ParsedManualScoreEventRequest:
     """Structured Manual Score Event data parsed from an Organizer Instruction."""
 
-    participant_email: str
+    player_email: str
     points_delta: int
     reason: str
     game_date: date | None = None
@@ -147,10 +147,10 @@ def parse_manual_score_event_email(body_text: str) -> ParsedManualScoreEventRequ
         raise ValueError("Action must be record-score-event")
     fields = payload.fields
 
-    participant = fields.get("player", "")
+    player = fields.get("player", "")
     points_text = fields.get("points", "")
     reason = fields.get("reason", "")
-    if not participant:
+    if not player:
         raise ValueError("Player is required")
     if not points_text:
         raise ValueError("Points is required")
@@ -180,7 +180,7 @@ def parse_manual_score_event_email(body_text: str) -> ParsedManualScoreEventRequ
         series = series_text
 
     return ParsedManualScoreEventRequest(
-        participant_email=participant,
+        player_email=player,
         points_delta=points_delta,
         reason=reason,
         game_date=game_date,
@@ -318,7 +318,7 @@ def _prepare_manual_score_event(
     instruction = config.organizer_instruction
     if instruction is None:
         raise ValueError("an Organizer Instruction is required")
-    player = config.state_store.create_or_find_player(email=email)
+    player = Player(id=new_id(), email=email)
     event = ScoreEvent(
         id=new_id(), idempotency_key=f"manual:{instruction.source_message_key}", player_id=player.id,
         series_id=series_id, event_type=SCORE_EVENT_MANUAL, points_delta=config.points_delta,
@@ -450,7 +450,7 @@ def process_manual_score_event_emails(
             try:
                 request = parse_manual_score_event_email(message.body_text)
                 event_config = ManualScoreEventConfig(
-                        email=request.participant_email,
+                        email=request.player_email,
                         points_delta=request.points_delta,
                         reason=request.reason,
                         state_store=config.state_store,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from qotd.domain.canonical import SCORE_EVENT_MANUAL, OrganizerInstruction, ScoreEvent, new_id
+from qotd.domain.canonical import SCORE_EVENT_MANUAL, OrganizerInstruction, Player, ScoreEvent, new_id
 from qotd.external.storage.canonical import CanonicalState
 
 
@@ -28,9 +28,10 @@ def record_score_event(*, state: CanonicalState, request: ManualScoreEventReques
         raise ValueError("a manual Score Event requires a reason")
     if request.points_delta == 0:
         raise ValueError("a manual Score Event must have a nonzero points delta")
-    player = state.create_or_find_player(email=request.player_email)
+    player = Player(id=new_id(), email=request.player_email.strip().lower())
     game = state.find_game(day=request.game_day) if request.game_day else None
     return state.record_instruction_score_event(
+        player=player,
         instruction=request.organizer_instruction,
         event=ScoreEvent(
             id=new_id(),

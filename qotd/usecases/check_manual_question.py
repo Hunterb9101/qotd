@@ -7,7 +7,7 @@ import re
 from typing import Callable
 
 from qotd.domain.dates import question_subject
-from qotd.domain.canonical import Game, gmail_message_key
+from qotd.domain.canonical import GAME_PENDING, OUTBOUND_SENT, Game, OutboundMessage, gmail_message_key, new_id
 from qotd.domain.models import Question, StoredQuestion
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.storage.canonical import CanonicalState
@@ -62,18 +62,27 @@ def check_manual_question(
     if message is None:
         return None
     existing = state.find_game(day=game_date)
-    if existing is not None and existing.status != "pending":
+    if existing is not None and existing.status != GAME_PENDING:
         return existing
     published_at = message.sent_at or datetime.now(UTC)
     question = manual_question_from_message(message, game_date=game_date)
     if question is None:
         return None
+    message_key = gmail_message_key(message.message_id)
+    outbound = OutboundMessage(
+        id=new_id(), idempotency_key=f"manual-publication:{message_key}", message_type="question_publication",
+        recipient="", subject=message.subject, body_text=message.body_text, status=OUTBOUND_SENT,
+        created_at=published_at, game_id=existing.id if existing is not None else new_id(),
+        source_message_key=message_key, sent_at=published_at,
+    )
     return publish_manual_game(
         state=state,
         game_day=game_date,
         question=question,
-        message_id=gmail_message_key(message.message_id),
+        message_id=message_key,
         published_at=published_at,
+        outbound_message=outbound,
+        game_id=existing.id if existing is not None else outbound.game_id,
     )
 
 
