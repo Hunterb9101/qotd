@@ -38,6 +38,7 @@ from qotd.external.storage.canonical import CanonicalState
 from qotd.presentation.emails import build_organizer_email
 from qotd.presentation.organizer_updates import build_organizer_update_body
 from qotd.usecases.get_question_history import load_question_for_game_date
+from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
 
 MessageFetcher = Callable[[str], list[ParsedEmailMessage]]
@@ -270,7 +271,8 @@ def score_responses(
             game = config.state_store.find_game(day=game_date)
             if game is None:
                 raise RuntimeError(f"No Game found for {game_date.isoformat()}")
-            intent = config.state_store.record_outbound_message(
+            existing_intent = config.state_store.find_outbound_message(idempotency_key=f"missing-answer:{game.id}")
+            intent = existing_intent or config.state_store.record_outbound_message(
                 OutboundMessage(
                     id=new_id(),
                     idempotency_key=f"missing-answer:{game.id}",
@@ -283,7 +285,21 @@ def score_responses(
                     game_id=game.id,
                 )
             )
-            organizer_message_id = intent.id
+            if config.dry_run:
+                organizer_message_id = intent.id
+            else:
+                assert fetch_messages is not None
+                organizer_message_id = deliver_outbound_message(
+                    state=config.state_store,
+                    intent=intent,
+                    sender=config.sender,
+                    fetch_messages=fetch_messages,
+                    send_message=lambda message: send_gmail_message(
+                        message, user_id=config.gmail_user, oauth_client_id=config.oauth_client_id,
+                        oauth_client_secret=config.oauth_client_secret, oauth_refresh_token=config.oauth_refresh_token,
+                    ),
+                    is_new=existing_intent is None,
+                )
         elif config.dry_run:
             organizer_message_id = f"dry-run:{game_date.isoformat()}"
         else:

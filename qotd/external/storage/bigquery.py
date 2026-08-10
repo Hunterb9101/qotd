@@ -442,6 +442,13 @@ class BQAdapter(StorageClient, CanonicalState):
         self._merge_record(table_name="outbound_messages", key="idempotency_key", values=asdict(message))
         return message
 
+    def find_outbound_message(self, *, idempotency_key: str) -> OutboundMessage | None:
+        rows = self.query_rows(
+            f"SELECT * FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @idempotency_key",
+            self._parameters({"idempotency_key": idempotency_key}),
+        )
+        return OutboundMessage(**rows[0]) if rows else None
+
     def reconcile_outbound_message(
         self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
     ) -> OutboundMessage:

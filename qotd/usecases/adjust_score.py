@@ -12,6 +12,8 @@ from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.canonical import (
     INSTRUCTION_APPLIED,
     INSTRUCTION_REJECTED,
+    OUTBOUND_PENDING,
+    OutboundMessage,
     OrganizerInstruction,
     gmail_message_key,
     new_id,
@@ -26,6 +28,7 @@ from qotd.external.storage.canonical import CanonicalState
 from qotd.presentation.emails import build_organizer_email
 from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
 from qotd.usecases.parse_organizer_instruction import QUOTED_HISTORY_PREFIXES, parse_organizer_instruction_payload
+from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
 
 @dataclass(frozen=True)
@@ -474,7 +477,22 @@ def process_score_adjustment_emails(
         )
         response_message_id = f"dry-run:{message.message_id}"
         if not config.dry_run:
-            response_message_id = send(response)
+            if isinstance(config.state_store, CanonicalState):
+                outcome_key = f"score-event-outcome:{message.message_id}"
+                existing_intent = config.state_store.find_outbound_message(idempotency_key=outcome_key)
+                intent = existing_intent or config.state_store.record_outbound_message(
+                    OutboundMessage(
+                        id=new_id(), idempotency_key=outcome_key, message_type="organizer_instruction_outcome",
+                        recipient=sender_email, subject=str(response["Subject"]), body_text=response_body,
+                        status=OUTBOUND_PENDING, created_at=datetime.now(UTC), organizer_instruction_id=instruction.id,
+                    )
+                )
+                response_message_id = deliver_outbound_message(
+                    state=config.state_store, intent=intent, sender=config.sender, fetch_messages=fetch,
+                    send_message=send, is_new=existing_intent is None,
+                )
+            else:
+                response_message_id = send(response)
             mark_handled(message.message_id)
 
         processed.append(

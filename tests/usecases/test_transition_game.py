@@ -1,9 +1,10 @@
 from datetime import UTC, date, datetime, timedelta
 from dataclasses import replace
+from email.message import EmailMessage
 
 import pytest
 
-from qotd.domain.canonical import GAME_PENDING, GAME_SCORED, INSTRUCTION_APPLIED, Game, OrganizerInstruction, ScoreEvent, Submission, gmail_message_key, new_id
+from qotd.domain.canonical import GAME_PENDING, GAME_SCORED, INSTRUCTION_APPLIED, OUTBOUND_PENDING, OUTBOUND_SENT, Game, OrganizerInstruction, ScoreEvent, Submission, gmail_message_key, new_id
 from qotd.domain.models import Question
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.usecases.handle_answer import apply_answer_instruction
@@ -301,6 +302,97 @@ def test_automated_publication_uses_canonical_state() -> None:
     assert game is not None
     assert game.status == "published"
     assert result.record.correct_option == "A"
+
+
+def _publication_config(state: InMemoryCanonicalState) -> SendQuestionConfig:
+    game_day = date(2026, 8, 10)
+    return SendQuestionConfig(
+        game_date=game_day, sender="organizer@example.com", gmail_user="organizer@example.com",
+        oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token",
+        google_group_email="players@example.com", state_store=state,
+        question_generator=lambda day, _state: Question(
+            game_date=day.isoformat(), prompt="Question?", options={"A": "One", "B": "Two", "C": "Three", "D": "Four"},
+            correct_option="A", source_note="Source", source_url="https://example.com/source",
+        ),
+    )
+
+
+def test_publication_send_failure_leaves_one_pending_intent() -> None:
+    state = InMemoryCanonicalState()
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        send_question(
+            _publication_config(state), fetch_messages=lambda _query: [],
+            send_message=lambda _message: (_ for _ in ()).throw(RuntimeError("send failed")),
+        )
+
+    assert state.find_game(day=date(2026, 8, 10)) is not None
+    assert len(state.outbound_messages) == 1
+    assert next(iter(state.outbound_messages.values())).status == OUTBOUND_PENDING
+
+
+def test_pending_publication_reconciles_without_another_send() -> None:
+    state = InMemoryCanonicalState()
+    config = _publication_config(state)
+    with pytest.raises(RuntimeError, match="send failed"):
+        send_question(
+            config, fetch_messages=lambda _query: [],
+            send_message=lambda _message: (_ for _ in ()).throw(RuntimeError("send failed")),
+        )
+    intent = next(iter(state.outbound_messages.values()))
+    sends: list[EmailMessage] = []
+
+    def record_unexpected_send(message: EmailMessage) -> str:
+        sends.append(message)
+        return "unexpected"
+
+    result = send_question(
+        config,
+        fetch_messages=lambda _query: [
+            ParsedEmailMessage("sent-message", "thread", "organizer@example.com", intent.subject, intent.created_at, intent.body_text)
+        ],
+        send_message=record_unexpected_send,
+    )
+
+    assert result.reason == "publication_intent_already_exists"
+    assert not sends
+    assert next(iter(state.outbound_messages.values())).status == OUTBOUND_SENT
+
+
+def test_ambiguous_pending_publication_never_sends_a_duplicate() -> None:
+    state = InMemoryCanonicalState()
+    config = _publication_config(state)
+    with pytest.raises(RuntimeError, match="send failed"):
+        send_question(config, fetch_messages=lambda _query: [], send_message=lambda _message: (_ for _ in ()).throw(RuntimeError("send failed")))
+    intent = next(iter(state.outbound_messages.values()))
+    sends: list[EmailMessage] = []
+    matches = [
+        ParsedEmailMessage(f"sent-{index}", "thread", "organizer@example.com", intent.subject, datetime(2026, 8, 10, tzinfo=UTC), intent.body_text)
+        for index in range(2)
+    ]
+
+    def record_unexpected_send(message: EmailMessage) -> str:
+        sends.append(message)
+        return "unexpected"
+
+    with pytest.raises(RuntimeError, match="uniquely reconciled"):
+        send_question(config, fetch_messages=lambda _query: matches, send_message=record_unexpected_send)
+
+    assert not sends
+    assert next(iter(state.outbound_messages.values())).status == OUTBOUND_PENDING
+
+
+def test_successful_publication_commits_game_and_marks_its_intent_sent() -> None:
+    state = InMemoryCanonicalState()
+
+    send_question(_publication_config(state), fetch_messages=lambda _query: [], send_message=lambda _message: "sent-message")
+
+    assert state.find_game(day=date(2026, 8, 10)) is not None
+    assert len(state.outbound_messages) == 1
+    outbound = next(iter(state.outbound_messages.values()))
+    assert outbound.status == OUTBOUND_SENT
+    game = state.find_game(day=date(2026, 8, 10))
+    assert outbound.game_id == game.id  # type: ignore[union-attr]
 
 
 def test_missing_answer_creates_one_organizer_intent_without_score_events() -> None:

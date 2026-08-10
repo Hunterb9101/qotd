@@ -251,6 +251,11 @@ class InMemoryCanonicalState(CanonicalState):
         self.outbound_messages[message.id] = message
         return message
 
+    def find_outbound_message(self, *, idempotency_key: str) -> OutboundMessage | None:
+        return next(
+            (item for item in self.outbound_messages.values() if item.idempotency_key == idempotency_key), None
+        )
+
     def reconcile_outbound_message(
         self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
     ) -> OutboundMessage:

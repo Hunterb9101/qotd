@@ -75,6 +75,9 @@ class CanonicalState(ABC):
     def record_outbound_message(self, message: OutboundMessage) -> OutboundMessage: ...
 
     @abstractmethod
+    def find_outbound_message(self, *, idempotency_key: str) -> OutboundMessage | None: ...
+
+    @abstractmethod
     def reconcile_outbound_message(
         self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
     ) -> OutboundMessage: ...

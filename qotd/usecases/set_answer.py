@@ -9,6 +9,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from qotd.domain.contacts import normalize_email_addresses
+from qotd.domain.canonical import OUTBOUND_PENDING, OutboundMessage, new_id
 from qotd.domain.models import OPTION_LABELS
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.external.email.gmail import mark_gmail_message_read, search_messages, send_gmail_message
@@ -16,6 +17,7 @@ from qotd.external.storage.canonical import CanonicalState
 from qotd.presentation.emails import build_organizer_email
 from qotd.usecases.handle_answer import apply_answer_instruction
 from qotd.usecases.parse_organizer_instruction import parse_organizer_instruction_payload
+from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
 
 ANSWER_INSTRUCTION_QUERY = 'is:unread {"Action: set-answer" "Action: set-correct-answer"}'
@@ -185,6 +187,7 @@ def process_set_answer_emails(
         normalized_sender = normalize_email_addresses([message.sender_email])
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
         update_result: SetAnswerResult | None = None
+        instruction_id: str | None = None
         error: str | None = None
         if sender_email not in approved_senders:
             error = f"sender is not approved: {sender_email}"
@@ -195,6 +198,7 @@ def process_set_answer_emails(
                     message=message,
                     processed_at=datetime.now(UTC),
                 )
+                instruction_id = canonical_result.instruction.id
                 if canonical_result.instruction.status == "rejected":
                     error = canonical_result.instruction.rejection_reason or "Organizer Instruction rejected"
                 else:
@@ -206,15 +210,28 @@ def process_set_answer_emails(
             except ValueError as exc:
                 error = str(exc)
 
+        response_body = set_answer_response_body(request_message=message, result=update_result, error=error)
         response = build_organizer_email(
             sender=config.sender,
             organizer=sender_email,
             subject="QOTD Answer instruction result",
-            body=set_answer_response_body(request_message=message, result=update_result, error=error),
+            body=response_body,
         )
         response_message_id = f"dry-run:{message.message_id}"
         if not config.dry_run:
-            response_message_id = send(response)
+            outcome_key = f"answer-outcome:{message.message_id}"
+            existing_intent = state.find_outbound_message(idempotency_key=outcome_key)
+            intent = existing_intent or state.record_outbound_message(
+                OutboundMessage(
+                    id=new_id(), idempotency_key=outcome_key, message_type="organizer_instruction_outcome",
+                    recipient=sender_email, subject=str(response["Subject"]), body_text=response_body,
+                    status=OUTBOUND_PENDING, created_at=datetime.now(UTC), organizer_instruction_id=instruction_id,
+                )
+            )
+            response_message_id = deliver_outbound_message(
+                state=state, intent=intent, sender=config.sender, fetch_messages=fetch, send_message=send,
+                is_new=existing_intent is None,
+            )
             mark_handled(message.message_id)
         processed.append(
             SetAnswerEmailProcessingResult(

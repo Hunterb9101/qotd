@@ -31,7 +31,7 @@ def publish_manual_game(
 
 def publish_automated_game(
     *, state: CanonicalState, game_day: date, question: Question, message_id: str, published_at: datetime,
-    outbound_message: OutboundMessage | None = None,
+    outbound_message: OutboundMessage | None = None, game_id: str | None = None,
 ) -> Game:
     """Discard a stale pending manual Game before automated publication."""
 
@@ -41,6 +41,7 @@ def publish_automated_game(
             game_day=game_day,
             question=question,
             publication_mode=PUBLICATION_AUTOMATED,
+            game_id=game_id,
             message_id=message_id,
             published_at=published_at,
         ), outbound_message=outbound_message
@@ -53,6 +54,7 @@ def _publication_game(
     game_day: date,
     question: Question,
     publication_mode: str,
+    game_id: str | None = None,
     message_id: str,
     published_at: datetime,
 ) -> Game:
@@ -63,7 +65,7 @@ def _publication_game(
         ends_on=game_day.replace(day=days_in_month),
     )
     return Game(
-        id=new_id(),
+        id=game_id or new_id(),
         series_id=series.id,
         day=game_day,
         status=GAME_PENDING,

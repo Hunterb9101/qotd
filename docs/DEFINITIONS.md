@@ -88,11 +88,21 @@ their current [**Score**](#score). It is sent alongside each [**Question**](#que
 
 The [**QOTD**](#qotd) for a given [**Day**](#day). A **Game** is either
 **pending** (only for a manual workflow) or **published** to
-[**Players**](#player), with its outbound Gmail message identity and send time
-recorded. A published [**Game**](#game) becomes **scored** when its eligible
+[**Players**](#player), with its Player-facing delivery tracked by an associated
+[**Outbound Message**](#outbound-message). A published [**Game**](#game) becomes **scored** when its eligible
 [**Submissions**](#submission) have produced their automatic
 [**Score Events**](#score-event). A [**Game**](#game) may be scored only once;
 later corrections use separate [**Score Events**](#score-event).
+
+#### Outbound Message
+
+A durable intent to send a [**Player**](#player)- or
+[**Organizer**](#organizer)-facing email caused by a [**Game**](#game)
+transition or [**Organizer Instruction**](#organizer-instruction). It is
+**pending** until it is sent or uniquely reconciled with Gmail, then records
+the one-way Gmail message identity and send time as **sent**. A pending
+**Outbound Message** must be reconciled with Gmail before a retry; if it cannot
+be uniquely identified, it remains pending and fails closed.
 
 #### Question
 
