@@ -12,15 +12,14 @@ from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.canonical import OUTBOUND_PENDING, OutboundMessage, new_id
 from qotd.domain.models import OPTION_LABELS
 from qotd.external.email.core import ParsedEmailMessage
-from qotd.external.email.gmail import mark_gmail_message_read, search_messages, send_gmail_message
+from qotd.external.email.runtime import build_organizer_email, mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
-from qotd.presentation.emails import build_organizer_email
 from qotd.usecases.handle_answer import apply_answer_instruction
 from qotd.usecases.parse_organizer_instruction import parse_organizer_instruction_payload
 from qotd.usecases.deliver_outbound_message import deliver_outbound_message
 
 
-ANSWER_INSTRUCTION_QUERY = 'is:unread {"Action: set-answer" "Action: set-correct-answer"}'
+ANSWER_INSTRUCTION_QUERY = 'is:unread {"Action: set-answer" "Action: set-answer"}'
 
 
 @dataclass(frozen=True)

@@ -101,6 +101,18 @@ def test_create_or_find_player_uses_a_parameterized_idempotent_merge() -> None:
     assert any(parameter.value == "ada@example.com" for parameter in config["query_parameters"])
 
 
+def test_create_or_find_series_reads_the_committed_row_when_a_transaction_returns_no_rows() -> None:
+    client = FakeClient([[], [{"id": "series-1", "name": "2026-08", "starts_on": date(2026, 8, 1), "ends_on": date(2026, 8, 31), "created_at": datetime(2026, 8, 1, tzinfo=UTC), "updated_at": datetime(2026, 8, 1, tzinfo=UTC)}]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        series = adapter.create_or_find_series(name="2026-08", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
+
+    assert series.id == "series-1"
+    assert "WHERE name = @name" in client.calls[1][0]
+
+
 def test_record_submission_classifies_deadline_and_supersession_in_one_transaction() -> None:
     client = FakeClient([[]])
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)

@@ -6,7 +6,7 @@ import calendar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
-from typing import Callable, cast
+from typing import Callable
 
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.canonical import (
@@ -19,13 +19,10 @@ from qotd.domain.canonical import (
     new_id,
 )
 from qotd.domain.dates import monthly_series
-from qotd.domain.models import ManualAdjustment, MonthlyScore
-from qotd.domain.scoring import latest_score_map, standings_from_scores
+from qotd.domain.models import ManualScoreEvent, ScoreboardLine
 from qotd.external.email.core import ParsedEmailMessage
-from qotd.external.email.gmail import mark_gmail_message_read, search_messages, send_gmail_message
-from qotd.external.storage.core import StorageClient
+from qotd.external.email.runtime import build_organizer_email, mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
-from qotd.presentation.emails import build_organizer_email
 from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
 from qotd.usecases.parse_organizer_instruction import QUOTED_HISTORY_PREFIXES, parse_organizer_instruction_payload
 from qotd.usecases.deliver_outbound_message import deliver_outbound_message
@@ -51,9 +48,9 @@ class ScoreAdjustmentConfig:
 class ScoreAdjustmentResult:
     """Result of a manual score adjustment attempt."""
 
-    adjustment: ManualAdjustment
-    monthly_score: MonthlyScore
-    standings: tuple[MonthlyScore, ...]
+    adjustment: ManualScoreEvent
+    monthly_score: ScoreboardLine
+    standings: tuple[ScoreboardLine, ...]
     applied: bool
 
 
@@ -80,7 +77,7 @@ class ProcessScoreAdjustmentEmailsConfig:
     oauth_client_id: str
     oauth_client_secret: str
     oauth_refresh_token: str
-    state_store: StorageClient | CanonicalState
+    state_store: CanonicalState
     query: str = "is:unread"
     max_results: int = 25
     dry_run: bool = False
@@ -248,14 +245,14 @@ def apply_score_adjustment(config: ScoreAdjustmentConfig) -> ScoreAdjustmentResu
         if existing_instruction is not None:
             scoreboard = config.state_store.read_scoreboard(series_id=series_id)
             player_score = next((item.score for item in scoreboard if item.email == email), 0)
-            adjustment = ManualAdjustment(
+            adjustment = ManualScoreEvent(
                 series=series, email=email, points_delta=config.points_delta,
                 source_gmail_message_id=source_message_id, idempotency_key=f"manual:{instruction.source_message_key}",
                 reason=reason, created_at=existing_instruction.processed_at.isoformat(),
             )
-            standings = tuple(MonthlyScore(series=series, email=item.email, points=item.score) for item in scoreboard)
+            standings = tuple(ScoreboardLine(series=series, email=item.email, points=item.score) for item in scoreboard)
             return ScoreAdjustmentResult(
-                adjustment=adjustment, monthly_score=MonthlyScore(series=series, email=email, points=player_score),
+                adjustment=adjustment, monthly_score=ScoreboardLine(series=series, email=email, points=player_score),
                 standings=standings, applied=False,
             )
         event = record_score_event(
@@ -272,61 +269,19 @@ def apply_score_adjustment(config: ScoreAdjustmentConfig) -> ScoreAdjustmentResu
         )
         scoreboard = config.state_store.read_scoreboard(series_id=series_id)
         player_score = next(item.score for item in scoreboard if item.player_id == event.player_id)
-        adjustment = ManualAdjustment(
+        adjustment = ManualScoreEvent(
             series=series, email=email, points_delta=config.points_delta,
             source_gmail_message_id=source_message_id, idempotency_key=event.idempotency_key,
             reason=reason, created_at=event.created_at.isoformat(),
         )
-        standings = tuple(MonthlyScore(series=series, email=item.email, points=item.score) for item in scoreboard)
+        standings = tuple(ScoreboardLine(series=series, email=item.email, points=item.score) for item in scoreboard)
         return ScoreAdjustmentResult(
             adjustment=adjustment,
-            monthly_score=MonthlyScore(series=series, email=email, points=player_score),
+            monthly_score=ScoreboardLine(series=series, email=email, points=player_score),
             standings=standings,
             applied=True,
         )
-    state_store = cast(StorageClient, config.state_store)
-    if config.game_date is not None and not question_exists(
-        state_store.read_question_records(),
-        game_date=config.game_date,
-    ):
-        raise ValueError(f"no stored question exists for {config.game_date.isoformat()}")
-
-    existing_adjustments = state_store.read_manual_adjustments()
-    existing_scores = state_store.read_monthly_scores(series=series)
-    scores = latest_score_map(existing_scores, series=series)
-    current_points = scores.get(email, 0)
-    updated_points = current_points + config.points_delta
-
-    adjustment = ManualAdjustment(
-        series=series,
-        email=email,
-        points_delta=config.points_delta,
-        source_gmail_message_id=config.source_gmail_message_id,
-        idempotency_key=idempotency_key,
-        reason=reason,
-        created_at=datetime.now(UTC).isoformat(),
-    )
-    monthly_score = MonthlyScore(series=series, email=email, points=updated_points)
-
-    if any(record.get("idempotency_key") == idempotency_key for record in existing_adjustments):
-        return ScoreAdjustmentResult(
-            adjustment=adjustment,
-            monthly_score=MonthlyScore(series=series, email=email, points=current_points),
-            standings=standings_from_scores(series, scores),
-            applied=False,
-        )
-
-    scores[email] = updated_points
-    if not config.dry_run:
-        state_store.append_manual_adjustment(adjustment)
-        state_store.append_monthly_score(monthly_score)
-
-    return ScoreAdjustmentResult(
-        adjustment=adjustment,
-        monthly_score=monthly_score,
-        standings=standings_from_scores(series, scores),
-        applied=True,
-    )
+    raise TypeError("canonical Game state is required")
 
 
 def build_score_adjustment_response_body(

@@ -12,7 +12,6 @@ from qotd.domain.dates import current_game_date
 from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.external.email.gmail import search_messages
-from qotd.provision import provision_canonical_state
 from qotd.usecases.set_answer import ANSWER_INSTRUCTION_QUERY, ProcessSetAnswerEmailsConfig, process_set_answer_emails
 from qotd.usecases.adjust_score import (
     ProcessScoreAdjustmentEmailsConfig,
@@ -123,17 +122,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="qotd")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    provision_parser = subparsers.add_parser(
-        "provision-canonical-state",
-        help="Operator-only: apply the canonical BigQuery schema to an existing dataset",
-    )
-    provision_parser.add_argument(
-        "--reset-legacy-state",
-        action="store_true",
-        help="Drop only the five legacy QOTD tables before applying the canonical schema",
-    )
-    add_google_options(provision_parser)
-
     publish_parser = subparsers.add_parser("publish-question", help="Generate and publish today's QOTD Question")
     publish_parser.add_argument("--date", type=parse_date, default=current_game_date())
     publish_parser.add_argument("--google-group-email", default=os.environ.get("QOTD_GOOGLE_GROUP_EMAIL", ""))
@@ -229,24 +217,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "provision-canonical-state":
-        require_google_options(args)
-        state_store = build_bigquery_state_store(
-            project_id=args.google_cloud_project,
-            dataset=args.bigquery_dataset,
-            oauth_client_id=args.oauth_client_id,
-            oauth_client_secret=args.oauth_client_secret,
-            oauth_refresh_token=args.oauth_refresh_token,
-        )
-        provision_canonical_state(
-            client=state_store.client,
-            project_id=args.google_cloud_project,
-            dataset=args.bigquery_dataset,
-            reset_legacy_state=args.reset_legacy_state,
-        )
-        print(f"Provisioned canonical QOTD state in {args.google_cloud_project}.{args.bigquery_dataset}")
-
-    elif args.command == "publish-question":
+    if args.command == "publish-question":
         require_sender_options(args)
         require_google_options(args)
         state_store = build_bigquery_state_store(

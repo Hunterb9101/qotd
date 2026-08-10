@@ -21,17 +21,15 @@ from qotd.domain.canonical import (
     Submission,
     new_id,
 )
-from qotd.external.storage.core import StorageClient
 from qotd.external.storage.canonical import CanonicalState
-from qotd.domain.models import CorrectAnswerUpdate, ManualAdjustment, MonthlyScore, ReplyProcessingRecord, StoredQuestion
 
 
 BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
 MAX_TRANSACTION_ATTEMPTS = 3
 
 
-class BQAdapter(StorageClient, CanonicalState):
-    """BigQuery-backed QOTD state store during the canonical cutover."""
+class BQAdapter(CanonicalState):
+    """BigQuery-backed canonical QOTD state store."""
 
     def __init__(self, *, project_id: str, dataset: str, client: Any) -> None:
         self.project_id = project_id
@@ -67,19 +65,6 @@ class BQAdapter(StorageClient, CanonicalState):
         """Return a fully qualified table id."""
 
         return f"{self.project_id}.{self.dataset}.{name}"
-
-    def insert_rows(self, table_name: str, rows: list[dict[str, Any]]) -> None:
-        """Append rows with a load job and raise if BigQuery rejects them."""
-
-        bigquery = importlib.import_module("google.cloud.bigquery")
-        job = self.client.load_table_from_json(
-            rows,
-            self.table(table_name),
-            job_config=bigquery.LoadJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_APPEND),
-        )
-        job.result()
-        if job.errors:
-            raise RuntimeError(f"BigQuery load failed for {table_name}: {job.errors}")
 
     def query_rows(self, query: str, parameters: list[Any] | None = None) -> list[dict[str, Any]]:
         """Run a parameterized query and return dict rows."""
@@ -170,6 +155,13 @@ class BQAdapter(StorageClient, CanonicalState):
             values={"id": new_id(), "name": name, "starts_on": starts_on, "ends_on": ends_on,
                     "created_at": now, "updated_at": now},
         )
+        if not rows:
+            rows = self.query_rows(
+                f"SELECT * FROM `{self.table('series')}` WHERE name = @name",
+                self._parameters({"name": name}),
+            )
+        if not rows:
+            raise RuntimeError("Series creation committed without a readable Series row")
         row = rows[0]
         return Series(**row)
 
@@ -470,166 +462,6 @@ class BQAdapter(StorageClient, CanonicalState):
             self._parameters({"series_id": series_id}),
         )
         return tuple(ScoreboardEntry(**row) for row in rows)
-
-    def append_question_record(self, record: StoredQuestion) -> None:
-        """Append one question record."""
-
-        self.insert_rows(
-            "questions",
-            [
-                {
-                    "game_date": record.game_date,
-                    "prompt": record.prompt,
-                    "options": record.options,
-                    "correct_option": record.correct_option,
-                    "source_note": record.source_note,
-                    "source_url": record.source_url,
-                    "source": record.source,
-                    "gmail_message_id": record.gmail_message_id,
-                    "created_at": record.created_at,
-                }
-            ],
-        )
-
-    def read_question_records(self) -> list[dict[str, Any]]:
-        """Read question records."""
-
-        records = self.query_rows(
-            f"""
-            SELECT
-              CAST(game_date AS STRING) AS game_date,
-              prompt,
-              TO_JSON_STRING(options) AS options,
-              correct_option,
-              source_note,
-              source_url,
-              source,
-              gmail_message_id,
-              CAST(created_at AS STRING) AS created_at
-            FROM `{self.table("questions")}`
-            ORDER BY created_at
-            """
-        )
-        for record in records:
-            options = record.get("options")
-            if isinstance(options, str):
-                record["options"] = json.loads(options)
-        return records
-
-    def append_monthly_score(self, record: MonthlyScore) -> None:
-        """Append one monthly score record."""
-
-        self.insert_rows(
-            "monthly_scores",
-            [
-                {
-                    "series": record.series,
-                    "email": record.email,
-                    "points": record.points,
-                    "updated_at": datetime.now(UTC).isoformat(),
-                }
-            ],
-        )
-
-    def read_monthly_scores(self, *, series: str | None = None) -> list[dict[str, Any]]:
-        """Read monthly score records."""
-
-        parameters = []
-        where_clause = ""
-        if series is not None:
-            bigquery = importlib.import_module("google.cloud.bigquery")
-            where_clause = "WHERE series = @series"
-            parameters.append(bigquery.ScalarQueryParameter("series", "STRING", series))
-        return self.query_rows(
-            f"""
-            SELECT series, email, points
-            FROM `{self.table("monthly_scores")}`
-            {where_clause}
-            ORDER BY updated_at
-            """,
-            parameters,
-        )
-
-    def append_reply_processing_record(
-        self,
-        record: ReplyProcessingRecord,
-        *,
-        interpreted_option: str | None = None,
-    ) -> None:
-        """Append one reply-processing record."""
-
-        self.insert_rows(
-            "reply_processing",
-            [
-                {
-                    "game_date": record.game_date,
-                    "email": record.email,
-                    "processing_key": record.processing_key,
-                    "latest_gmail_message_id": record.latest_gmail_message_id,
-                    "interpreted_option": interpreted_option,
-                    "points_awarded": record.points_awarded,
-                    "needs_audit": record.needs_audit,
-                    "processed_at": record.processed_at,
-                }
-            ],
-        )
-
-    def read_reply_processing_records(self, *, game_date: str | None = None) -> list[dict[str, Any]]:
-        """Read reply-processing records."""
-
-        parameters = []
-        where_clause = ""
-        if game_date is not None:
-            bigquery = importlib.import_module("google.cloud.bigquery")
-            where_clause = "WHERE game_date = @game_date"
-            parameters.append(bigquery.ScalarQueryParameter("game_date", "DATE", game_date))
-        return self.query_rows(
-            f"""
-            SELECT
-              CAST(game_date AS STRING) AS game_date,
-              email,
-              processing_key,
-              latest_gmail_message_id,
-              interpreted_option,
-              points_awarded,
-              needs_audit,
-              CAST(processed_at AS STRING) AS processed_at
-            FROM `{self.table("reply_processing")}`
-            {where_clause}
-            ORDER BY processed_at
-            """,
-            parameters,
-        )
-
-    def append_manual_adjustment(self, record: ManualAdjustment) -> None:
-        """Append one manual adjustment record."""
-
-        self.insert_rows("manual_adjustments", [record.to_json_dict()])
-
-    def read_manual_adjustments(self) -> list[dict[str, Any]]:
-        """Read manual adjustment records."""
-
-        return self.query_rows(f"SELECT * FROM `{self.table('manual_adjustments')}` ORDER BY created_at")
-
-    def append_correct_answer_update(self, record: CorrectAnswerUpdate) -> None:
-        """Append one correct-answer update record."""
-
-        self.insert_rows("correct_answer_updates", [record.to_json_dict()])
-
-    def read_correct_answer_updates(self, *, game_date: str | None = None) -> list[dict[str, Any]]:
-        """Read correct-answer update records."""
-
-        parameters = []
-        where_clause = ""
-        if game_date is not None:
-            bigquery = importlib.import_module("google.cloud.bigquery")
-            where_clause = "WHERE game_date = @game_date"
-            parameters.append(bigquery.ScalarQueryParameter("game_date", "DATE", game_date))
-        return self.query_rows(
-            f"SELECT * FROM `{self.table('correct_answer_updates')}` {where_clause} ORDER BY created_at",
-            parameters,
-        )
-
 
 def build_bigquery_state_store(
     *,

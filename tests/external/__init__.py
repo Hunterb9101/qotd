@@ -1,1 +1,1 @@
-"""Tests for external service adapters."""
+"""External adapter tests."""

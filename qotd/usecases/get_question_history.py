@@ -10,7 +10,7 @@ from qotd.external.storage.canonical import CanonicalState
 
 
 def stored_question_from_game(game: Game) -> StoredQuestion:
-    """Adapt a canonical Game only at the legacy rendering boundary."""
+    """Adapt a canonical Game for Question rendering."""
 
     return StoredQuestion(
         game_date=game.day.isoformat(),

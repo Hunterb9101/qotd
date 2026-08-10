@@ -47,10 +47,14 @@ QOTD stores Game state in a BigQuery dataset. Google Cloud requires a billing ac
 Before enabling canonical workflows, pause the scheduled workflows and provision an existing, reviewed target dataset locally:
 
 ```sh
-python -m qotd provision-canonical-state --reset-legacy-state
+python scripts/seed_db.py --project question-of-the-day-501919 --dataset qotd --reset-legacy-state
 ```
 
 This operator-only command verifies the configured project and dataset before executing SQL. The reset option drops only the five named legacy QOTD tables, then applies the versioned canonical schema; it never drops the dataset.
+
+Before re-enabling workflows, create the active Series by publishing or setting
+an Answer for its first Game, then verify the canonical tables and the empty
+Series Scoreboard in BigQuery.
 
 ## GitHub Actions
 

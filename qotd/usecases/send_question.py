@@ -14,9 +14,8 @@ from qotd.domain.canonical import Game, OUTBOUND_PENDING, OutboundMessage, new_i
 from qotd.domain.models import Question, StoredQuestion
 from qotd.domain.validation import validate_question
 from qotd.external.email.core import ParsedEmailMessage
-from qotd.external.email.gmail import search_messages, send_gmail_message
+from qotd.external.email.runtime import build_player_email, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
-from qotd.presentation.emails import build_player_email
 from qotd.usecases.check_manual_question import MessageFetcher, check_manual_question
 from qotd.usecases.publish_game import publish_automated_game
 from qotd.usecases.get_question_history import find_latest_answered_question_before, stored_question_from_game

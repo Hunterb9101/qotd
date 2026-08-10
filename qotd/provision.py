@@ -37,6 +37,6 @@ def provision_canonical_state(
         raise ValueError("BigQuery returned a dataset other than the requested target")
 
     job_config = bigquery.QueryJobConfig(default_dataset=dataset_ref.reference)
-    scripts = [LEGACY_RESET] if reset_legacy_state else [CANONICAL_SCHEMA]
+    scripts = [LEGACY_RESET, CANONICAL_SCHEMA] if reset_legacy_state else [CANONICAL_SCHEMA]
     for script in scripts:
         client.query(script.read_text(), job_config=job_config).result()

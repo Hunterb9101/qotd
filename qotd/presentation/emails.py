@@ -7,7 +7,7 @@ from datetime import date
 from email.message import EmailMessage
 
 from qotd.domain.dates import is_final_weekday_of_month, question_subject
-from qotd.domain.models import OPTION_LABELS, MonthlyScore, Question, StoredQuestion
+from qotd.domain.models import OPTION_LABELS, ScoreboardLine, Question, StoredQuestion
 from qotd.presentation.rendering import render_template
 
 
@@ -19,7 +19,7 @@ def build_player_email(
     delivery_address: str | None = None,
     previous_question: StoredQuestion | None = None,
     point_earners: Sequence[str] = (),
-    standings: Sequence[MonthlyScore] = (),
+    standings: Sequence[ScoreboardLine] = (),
 ) -> EmailMessage:
     """Build the Player-facing QOTD email without Answer metadata."""
 

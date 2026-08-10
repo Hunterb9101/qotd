@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from qotd.domain.models import MonthlyScore
+from qotd.domain.models import ScoreboardLine
 from qotd.external.storage.canonical import CanonicalState
 
 
@@ -14,7 +14,7 @@ class PlayerResults:
     """Finalized scoring details suitable for a Player recap."""
 
     point_earners: tuple[str, ...]
-    standings: tuple[MonthlyScore, ...]
+    standings: tuple[ScoreboardLine, ...]
 
 
 def load_player_results(state_store: CanonicalState, game_date: date) -> PlayerResults:
@@ -27,7 +27,7 @@ def load_player_results(state_store: CanonicalState, game_date: date) -> PlayerR
     return PlayerResults(
         point_earners=(),
         standings=tuple(
-            MonthlyScore(series=game.day.strftime("%m%y"), email=entry.email, points=entry.score)
+            ScoreboardLine(series=game.day.strftime("%m%y"), email=entry.email, points=entry.score)
             for entry in scoreboard
         ),
     )
