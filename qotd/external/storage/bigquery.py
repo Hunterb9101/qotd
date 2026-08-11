@@ -301,6 +301,7 @@ class BQAdapter(CanonicalState):
         return f"""
             INSERT INTO `{self.table('outbound_messages')}` ({', '.join(fields)})
             SELECT {', '.join(f'@outbound_{field}' for field in fields)}
+            FROM (SELECT 1)
             WHERE instruction_is_new
               AND NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
         """
@@ -434,6 +435,7 @@ class BQAdapter(CanonicalState):
             statement += f"""
                 INSERT INTO `{self.table('outbound_messages')}` ({", ".join(outbound_fields)})
                 SELECT {", ".join(f"@outbound_{field}" for field in outbound_fields)}
+                FROM (SELECT 1)
                 WHERE NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
             """
             values.update(outbound)
@@ -500,6 +502,7 @@ class BQAdapter(CanonicalState):
             statement += f"""
                 INSERT INTO `{self.table('outbound_messages')}` ({", ".join(outbound_fields)})
                 SELECT {", ".join(f"@outbound_{field}" for field in outbound_fields)}
+                FROM (SELECT 1)
                 WHERE NOT EXISTS (SELECT 1 FROM `{self.table('outbound_messages')}` WHERE idempotency_key = @outbound_idempotency_key);
             """
             values.update(outbound)
@@ -571,14 +574,14 @@ class BQAdapter(CanonicalState):
             fields = tuple(asdict(event))
             statements.append(
                 f"""INSERT INTO `{self.table("score_events")}` ({", ".join(fields)})
-                SELECT {", ".join(f"@event_{index}_{field}" for field in fields)} WHERE transitioned;"""
+                SELECT {", ".join(f"@event_{index}_{field}" for field in fields)} FROM (SELECT 1) WHERE transitioned;"""
             )
         for index, message in enumerate(outbound_messages):
             message_values = {f"outbound_{index}_{key}": value for key, value in asdict(message).items()}
             fields = tuple(asdict(message))
             statements.append(
                 f"""INSERT INTO `{self.table("outbound_messages")}` ({", ".join(fields)})
-                SELECT {", ".join(f"@outbound_{index}_{field}" for field in fields)} WHERE transitioned;"""
+                SELECT {", ".join(f"@outbound_{index}_{field}" for field in fields)} FROM (SELECT 1) WHERE transitioned;"""
             )
             parameters.update(message_values)
         statements.append(f"SELECT * FROM `{self.table('games')}` WHERE id = @id;")
@@ -617,6 +620,7 @@ class BQAdapter(CanonicalState):
             WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
             INSERT INTO `{self.table('score_events')}` ({', '.join(asdict(event))})
             SELECT {', '.join(f'@event_{field}' if field != 'player_id' else '(SELECT id FROM `' + self.table('players') + '` WHERE email = @player_email)' for field in asdict(event))}
+            FROM (SELECT 1)
             WHERE instruction_is_new
               AND NOT EXISTS (SELECT 1 FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key);
             SELECT * FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key;
@@ -648,6 +652,7 @@ class BQAdapter(CanonicalState):
             WHEN NOT MATCHED THEN INSERT ({', '.join(asdict(instruction))}) VALUES ({', '.join(f'source.{field}' for field in asdict(instruction))});
             INSERT INTO `{self.table('score_events')}` ({', '.join(asdict(event))})
             SELECT {', '.join(f'@event_{field}' if field != 'player_id' else '(SELECT id FROM `' + self.table('players') + '` WHERE email = @player_email)' for field in asdict(event))}
+            FROM (SELECT 1)
             WHERE instruction_is_new
               AND NOT EXISTS (SELECT 1 FROM `{self.table('score_events')}` WHERE idempotency_key = @event_idempotency_key);
             MERGE `{self.table('outbound_messages')}` AS target

@@ -260,6 +260,10 @@ def test_automated_publication_transaction_persists_a_published_game() -> None:
         "game-1", "series-1", date(2026, 8, 10), GAME_PENDING, "automated", now, now, now,
         correct_option="A",
     )
+    outbound = OutboundMessage(
+        "outbound-1", "publication:2026-08-10", "question_publication", "group@example.com",
+        "QOTD", "Question", OUTBOUND_PENDING, now,
+    )
     client = FakeClient([[]])
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
     fake_bigquery = SimpleNamespace(
@@ -268,12 +272,13 @@ def test_automated_publication_transaction_persists_a_published_game() -> None:
     )
 
     with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
-        published = adapter.replace_pending_game(game)
+        published = adapter.replace_pending_game(game, outbound_message=outbound)
 
     sql, config = client.calls[0]
     assert isinstance(config, dict)
     assert published.status == GAME_PUBLISHED
     assert "INSERT INTO `project-id.qotd.games`" in sql
+    assert "FROM (SELECT 1)\n                WHERE NOT EXISTS" in sql
     assert any(
         parameter.name == "status" and parameter.value == GAME_PUBLISHED
         for parameter in config["query_parameters"]
