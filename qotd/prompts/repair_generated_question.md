@@ -40,5 +40,5 @@ wording or answer choices that do not contribute to a reported problem.
 - Retain valid wording and options when possible. Prefer a small editorial correction over a rewrite.
 - Keep exactly four distinct options labeled A, B, C, and D with exactly one unambiguous answer.
 - Do not add, replace, or invent sources. The supplied URLs and evidence remain authoritative.
-- Do not expose or strongly hint at the correct answer in the participant-facing prompt.
+- Do not expose or strongly hint at the correct answer in the Player-facing prompt.
 - Return only the repaired structured fields. Do not include markdown, commentary, or extra keys.

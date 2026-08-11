@@ -5,7 +5,7 @@ from unittest.mock import patch
 from qotd.cli import build_parser
 
 
-def test_send_question_reads_google_group_email_from_environment() -> None:
+def test_publish_question_reads_google_group_email_from_environment() -> None:
     """Configure private Group delivery through the production environment."""
 
     with patch.dict(
@@ -15,6 +15,6 @@ def test_send_question_reads_google_group_email_from_environment() -> None:
     ):
         parser = build_parser()
 
-    args = parser.parse_args(["send-question"])
+    args = parser.parse_args(["publish-question"])
 
     assert args.google_group_email == "qotd-group@googlegroups.com"

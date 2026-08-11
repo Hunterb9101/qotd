@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from typing import Any
 
 from qotd.domain.contacts import normalize_email_addresses
-from qotd.domain.models import ReplyCandidate
+from qotd.domain.models import SubmissionCandidate
 from qotd.external.auth.gcp import build_oauth_credentials
 from qotd.external.email.core import EmailClient, ParsedEmailMessage
 
@@ -391,13 +391,13 @@ class GmailAdapter(EmailClient):
         )
 
     @staticmethod
-    def build_reply_candidate(message: ParsedEmailMessage, *, game_date: str) -> ReplyCandidate:
+    def build_reply_candidate(message: ParsedEmailMessage, *, game_date: str) -> SubmissionCandidate:
         """Build a reply candidate for later interpretation and scoring."""
 
         normalized_email = normalize_email_addresses([message.sender_email])
         if not normalized_email:
             raise ValueError("reply message is missing a sender email")
-        return ReplyCandidate(
+        return SubmissionCandidate(
             game_date=game_date,
             sender_email=normalized_email[0],
             gmail_message_id=message.message_id,

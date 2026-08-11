@@ -17,7 +17,7 @@ def is_weekday(value: date) -> bool:
 
 
 def question_subject(game_date: date | str) -> str:
-    """Return the canonical participant-question subject for a game date."""
+    """Return the canonical Player Question subject for a Day."""
 
     parsed_date = game_date if isinstance(game_date, date) else date.fromisoformat(game_date)
     date_text = parsed_date.strftime("%m-%d-%y")
@@ -25,13 +25,13 @@ def question_subject(game_date: date | str) -> str:
 
 
 def current_game_date() -> date:
-    """Return today's game date in the configured Mountain time zone."""
+    """Return the current Day in the configured Mountain time zone."""
 
     return datetime.now(MOUNTAIN_TIME).date()
 
 
 def previous_game_day(scoring_date: date) -> date:
-    """Return the previous weekday game date for a scoring date."""
+    """Return the previous weekday Day for a scoring Day."""
 
     candidate = scoring_date - timedelta(days=1)
     while not is_weekday(candidate):
@@ -40,7 +40,7 @@ def previous_game_day(scoring_date: date) -> date:
 
 
 def next_scoring_day(game_date: date) -> date:
-    """Return the next weekday scoring date for a game date."""
+    """Return the next weekday scoring Day for a Game Day."""
 
     candidate = game_date + timedelta(days=1)
     while not is_weekday(candidate):
@@ -55,7 +55,7 @@ def answer_cutoff_at(scoring_date: date) -> datetime:
 
 
 def monthly_series(game_date: date) -> str:
-    """Return the MMYY score series for a game date."""
+    """Return the MMYY Series identifier for a Game Day."""
 
     return game_date.strftime("%m%y")
 

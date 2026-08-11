@@ -1,0 +1,43 @@
+{% if previous_question -%}
+{% if previous_question.source_note %} {{ previous_question.source_note }}
+{% endif %}
+The Answer on {{ previous_question.game_date }} is {{ previous_question.correct_option }}. {{ previous_question.options[previous_question.correct_option] }}
+
+Points earned:
+{% for email in point_earners -%}
+- {{ email }}
+{% else -%}
+- None
+{% endfor %}
+
+{% if is_month_end_recap -%}
+Final Scoreboard for {{ previous_question.game_date[:7] }}:
+{% for score in standings -%}
+{{ loop.index }}. {{ score.email }} — {{ score.points }}
+{% else -%}
+- None
+{% endfor %}
+
+Winners:
+{% for winner in monthly_winners -%}
+- {{ winner.email }} with {{ winner.points }} points
+{% else -%}
+- No scored Players in this Series
+{% endfor %}
+
+A new Series starts today with a zeroed Scoreboard.
+{% else -%}
+Current Scoreboard:
+{% for score in standings -%}
+{{ loop.index }}. {{ score.email }} — {{ score.points }}
+{% else -%}
+- None
+{% endfor %}
+{% endif %}
+
+{% endif -%}
+{{ question.prompt }}
+
+{% for label in option_labels %}
+{{ label }}. {{ question.options[label] }}
+{% endfor %}

@@ -95,11 +95,9 @@ class StoredQuestion:
         """Return a JSON-serializable representation."""
 
         return asdict(self)
-
-
 @dataclass(frozen=True)
-class MonthlyScore:
-    """Persisted monthly score total for one participant."""
+class ScoreboardLine:
+    """One Player's Score in a Series, as shown on the Scoreboard."""
 
     series: str
     email: str
@@ -112,32 +110,7 @@ class MonthlyScore:
 
 
 @dataclass(frozen=True)
-class ReplyProcessingRecord:
-    """Persisted reply-processing state for one participant and game date."""
-
-    game_date: str
-    email: str
-    latest_gmail_message_id: str
-    points_awarded: int
-    needs_audit: bool
-    processed_at: str
-
-    @property
-    def processing_key(self) -> str:
-        """Return an idempotency key for this participant and game date."""
-
-        return f"{self.game_date}:{self.email}"
-
-    def to_json_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation."""
-
-        data = asdict(self)
-        data["processing_key"] = self.processing_key
-        return data
-
-
-@dataclass(frozen=True)
-class ReplyCandidate:
+class SubmissionCandidate:
     """Reply data that can later be interpreted and scored."""
 
     game_date: str
@@ -154,8 +127,8 @@ class ReplyCandidate:
 
 
 @dataclass(frozen=True)
-class ManualAdjustment:
-    """Persisted manual score adjustment."""
+class ManualScoreEvent:
+    """Persisted manual Score Event created by an Organizer Instruction."""
 
     series: str
     email: str
@@ -163,23 +136,6 @@ class ManualAdjustment:
     source_gmail_message_id: str
     idempotency_key: str
     reason: str
-    created_at: str
-
-    def to_json_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation."""
-
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class CorrectAnswerUpdate:
-    """Persisted correct-answer update for a manual question."""
-
-    game_date: str
-    correct_option: str
-    source_url: str
-    source_gmail_message_id: str
-    idempotency_key: str
     created_at: str
 
     def to_json_dict(self) -> dict[str, Any]:

@@ -1,4 +1,4 @@
-name: Send QOTD
+name: Publish QOTD Question
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  send-question:
+  publish-question:
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -28,12 +28,18 @@ jobs:
           python-version: "3.13"
 
       - name: Confirm scheduled Mountain time
+<<<<<<< HEAD
         id: scheduled-time
+=======
+        id: scheduled-local-time
+        if: github.event_name == 'schedule'
+>>>>>>> 37feffa3cdacd3042d3a911a27c031981c881c16
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
+<<<<<<< HEAD
           is_noon = datetime.now(ZoneInfo("America/Denver")).hour == 12
           print(f"run={'true' if is_noon else 'false'}")
           PY
@@ -45,3 +51,16 @@ jobs:
       - name: Send generated QOTD
         if: github.event_name == 'workflow_dispatch' || steps.scheduled-time.outputs.run == 'true'
         run: python -m qotd send-question
+=======
+          is_publish_hour = datetime.now(ZoneInfo("America/Denver")).hour == 12
+          print(f"run={'true' if is_publish_hour else 'false'}")
+          PY
+
+      - name: Install dependencies
+        if: github.event_name != 'schedule' || steps.scheduled-local-time.outputs.run == 'true'
+        run: python -m pip install -r requirements.txt
+
+      - name: Publish generated QOTD Question
+        if: github.event_name != 'schedule' || steps.scheduled-local-time.outputs.run == 'true'
+        run: python -m qotd publish-question
+>>>>>>> 37feffa3cdacd3042d3a911a27c031981c881c16

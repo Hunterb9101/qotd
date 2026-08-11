@@ -8,7 +8,7 @@ from qotd.domain.models import OPTION_LABELS, Question
 
 
 def shuffle_answer_options(options: dict[str, str], correct_option: str) -> tuple[dict[str, str], str]:
-    """Randomize option placement while retaining the correct answer."""
+    """Randomize option placement while retaining the Answer."""
 
     answers = list(options.items())
     random.shuffle(answers)
