@@ -684,13 +684,15 @@ class BQAdapter(CanonicalState):
             UPDATE `{self.table("outbound_messages")}`
             SET status = 'sent', source_message_key = @source_message_key, sent_at = @sent_at
             WHERE idempotency_key = @idempotency_key AND status = 'pending';
-            SELECT * FROM `{self.table("outbound_messages")}` WHERE idempotency_key = @idempotency_key;
         """
-        rows = self.transaction_rows(
+        self.transaction_rows(
             statement,
             self._parameters({"idempotency_key": idempotency_key, "source_message_key": source_message_key, "sent_at": sent_at}),
         )
-        return OutboundMessage(**rows[0])
+        reconciled = self.find_outbound_message(idempotency_key=idempotency_key)
+        if reconciled is None:
+            raise RuntimeError("Outbound Message disappeared during reconciliation")
+        return reconciled
 
     def read_scoreboard(self, *, series_id: str) -> tuple[ScoreboardEntry, ...]:
         rows = self.query_rows(

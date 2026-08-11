@@ -8,7 +8,7 @@ import pytest
 
 from datetime import UTC, date, datetime
 
-from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, OUTBOUND_PENDING, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission
+from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, OUTBOUND_PENDING, OUTBOUND_SENT, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission
 from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS
 
 
@@ -139,6 +139,29 @@ def test_create_or_find_series_reads_the_committed_row_when_a_transaction_return
 
     assert series.id == "series-1"
     assert "WHERE name = @name" in client.calls[1][0]
+
+
+def test_reconcile_outbound_message_reads_the_reconciled_message_after_commit() -> None:
+    sent_at = datetime(2026, 8, 10, tzinfo=UTC)
+    row = {
+        "id": "outbound-1", "idempotency_key": "outcome:message", "message_type": "organizer_instruction_outcome",
+        "recipient": "organizer@example.com", "subject": "Result", "body_text": "Done", "status": OUTBOUND_SENT,
+        "created_at": sent_at, "game_id": None, "organizer_instruction_id": None,
+        "source_message_key": "gmail:message", "sent_at": sent_at,
+    }
+    client = FakeClient([[], [row]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        reconciled = adapter.reconcile_outbound_message(
+            idempotency_key="outcome:message", source_message_key="gmail:message", sent_at=sent_at
+        )
+
+    assert reconciled.status == OUTBOUND_SENT
+    assert len(client.calls) == 2
+    assert "UPDATE `project-id.qotd.outbound_messages`" in client.calls[0][0]
+    assert "SELECT * FROM `project-id.qotd.outbound_messages`" in client.calls[1][0]
 
 
 def test_record_submission_classifies_deadline_and_supersession_in_one_transaction() -> None:
