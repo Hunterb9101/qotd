@@ -1,4 +1,4 @@
-name: Send QOTD
+name: Publish QOTD Question
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  send-question:
+  publish-question:
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -42,6 +42,6 @@ jobs:
         if: github.event_name == 'workflow_dispatch' || steps.scheduled-time.outputs.run == 'true'
         run: python -m pip install -r requirements.txt
 
-      - name: Send generated QOTD
+      - name: Publish generated QOTD Question
         if: github.event_name == 'workflow_dispatch' || steps.scheduled-time.outputs.run == 'true'
-        run: python -m qotd send-question
+        run: python -m qotd publish-question
