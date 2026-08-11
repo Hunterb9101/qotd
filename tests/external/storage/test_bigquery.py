@@ -58,6 +58,21 @@ def test_transaction_rows_uses_parameter_binding_and_a_transaction_script() -> N
     assert "player-1" not in sql
 
 
+def test_transaction_rows_places_declarations_before_the_transaction() -> None:
+    client = FakeClient([[]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        adapter.transaction_rows(
+            "DECLARE is_new BOOL DEFAULT TRUE;\nUPDATE games SET status = @status",
+            [],
+        )
+
+    sql, _ = client.calls[0]
+    assert sql.index("DECLARE is_new") < sql.index("BEGIN TRANSACTION;") < sql.index("UPDATE games")
+
+
 def test_transaction_rows_retries_only_transaction_conflicts() -> None:
     client = FakeClient([RuntimeError("Concurrent update cancelled"), []])
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)

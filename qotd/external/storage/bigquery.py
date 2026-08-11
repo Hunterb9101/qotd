@@ -77,7 +77,8 @@ class BQAdapter(CanonicalState):
         """Run parameterized GoogleSQL DML in a bounded-retry transaction."""
 
         bigquery = importlib.import_module("google.cloud.bigquery")
-        script = f"BEGIN TRANSACTION;\n{statement}\nCOMMIT TRANSACTION;"
+        declarations, transactional_statement = self._split_leading_declarations(statement)
+        script = f"{declarations}BEGIN TRANSACTION;\n{transactional_statement}\nCOMMIT TRANSACTION;"
         job_config = bigquery.QueryJobConfig(query_parameters=parameters)
         for attempt in range(MAX_TRANSACTION_ATTEMPTS):
             try:
@@ -86,6 +87,36 @@ class BQAdapter(CanonicalState):
                 if not self._is_transaction_conflict(exc) or attempt == MAX_TRANSACTION_ATTEMPTS - 1:
                     raise RuntimeError("BigQuery canonical-state transaction failed") from exc
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _split_leading_declarations(statement: str) -> tuple[str, str]:
+        """Separate leading GoogleSQL DECLARE statements from transactional DML."""
+
+        position = 0
+        declarations_end = 0
+        length = len(statement)
+        while True:
+            while position < length and statement[position].isspace():
+                position += 1
+            if not statement[position:].upper().startswith("DECLARE "):
+                break
+
+            parentheses = 0
+            while position < length:
+                character = statement[position]
+                if character == "(":
+                    parentheses += 1
+                elif character == ")":
+                    parentheses -= 1
+                elif character == ";" and parentheses == 0:
+                    position += 1
+                    declarations_end = position
+                    break
+                position += 1
+            else:
+                raise ValueError("unterminated GoogleSQL DECLARE statement")
+
+        return statement[:declarations_end], statement[declarations_end:]
 
     @staticmethod
     def _is_transaction_conflict(error: Exception) -> bool:
