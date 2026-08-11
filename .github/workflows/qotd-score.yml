@@ -55,7 +55,7 @@ jobs:
         if: github.event_name != 'schedule' || steps.scheduled-local-time.outputs.run == 'true'
         run: |
           if [ -n "${{ inputs.game_date }}" ]; then
-            python -m qotd score-responses --game-date "${{ inputs.game_date }}"
+            python -m qotd score-responses --skip-if-missing-question --game-date "${{ inputs.game_date }}"
           else
-            python -m qotd score-responses
+            python -m qotd score-responses --skip-if-missing-question
           fi

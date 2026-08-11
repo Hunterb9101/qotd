@@ -8,7 +8,7 @@ import os
 from dataclasses import asdict
 from datetime import date
 
-from qotd.domain.dates import current_game_date
+from qotd.domain.dates import current_game_date, previous_game_day
 from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.bigquery import build_bigquery_state_store
 from qotd.external.email.gmail import search_messages
@@ -25,6 +25,7 @@ from qotd.usecases.score_submissions import (
     collect_submissions_for_day,
     score_responses,
 )
+from qotd.usecases.get_question_history import MissingQuestionError
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
 from qotd.usecases.repair_question import RepairGeneratedQuestion
@@ -164,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("OPENAI_INTERPRETER_MODEL", DEFAULT_OPENAI_INTERPRETER_MODEL),
     )
     score_parser.add_argument("--disable-ai-answer-interpreter", action="store_true")
+    score_parser.add_argument(
+        "--skip-if-missing-question",
+        action="store_true",
+        help="Exit successfully when the requested Game has not been published",
+    )
     add_google_options(score_parser)
     score_parser.add_argument("--dry-run", action="store_true")
 
@@ -321,29 +327,36 @@ def main() -> None:
             oauth_refresh_token=args.oauth_refresh_token,
         )
 
-        score_result = score_responses(
-            ScoreResponsesConfig(
-                scoring_date=args.scoring_date,
-                game_date=args.game_date,
-                sender=args.sender,
-                organizer=args.organizer,
-                gmail_user=args.gmail_user,
-                oauth_client_id=args.oauth_client_id,
-                oauth_client_secret=args.oauth_client_secret,
-                oauth_refresh_token=args.oauth_refresh_token,
-                state_store=state_store,
-                answer_interpreter_factory=None
-                if args.disable_ai_answer_interpreter
-                else lambda question: LLMAnswerInterpreter(
-                    llm_client=build_openai_llm_client(
-                        api_key=args.openai_api_key,
-                        model=args.openai_interpreter_model,
+        try:
+            score_result = score_responses(
+                ScoreResponsesConfig(
+                    scoring_date=args.scoring_date,
+                    game_date=args.game_date,
+                    sender=args.sender,
+                    organizer=args.organizer,
+                    gmail_user=args.gmail_user,
+                    oauth_client_id=args.oauth_client_id,
+                    oauth_client_secret=args.oauth_client_secret,
+                    oauth_refresh_token=args.oauth_refresh_token,
+                    state_store=state_store,
+                    answer_interpreter_factory=None
+                    if args.disable_ai_answer_interpreter
+                    else lambda question: LLMAnswerInterpreter(
+                        llm_client=build_openai_llm_client(
+                            api_key=args.openai_api_key,
+                            model=args.openai_interpreter_model,
+                        ),
+                        question=question,
                     ),
-                    question=question,
-                ),
-                dry_run=args.dry_run,
+                    dry_run=args.dry_run,
+                )
             )
-        )
+        except MissingQuestionError:
+            if not args.skip_if_missing_question:
+                raise
+            game_date = args.game_date or previous_game_day(args.scoring_date or current_game_date())
+            print(f"QOTD scoring skipped for {game_date}: no stored question.")
+            return
         print(
             f"Scored {score_result.reply_count} replies for {score_result.question.game_date}; "
             f"organizer update {score_result.organizer_message_id}"

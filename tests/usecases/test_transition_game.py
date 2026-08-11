@@ -10,6 +10,7 @@ from qotd.external.email.core import ParsedEmailMessage
 from qotd.usecases.handle_answer import apply_answer_instruction
 from qotd.usecases.transition_game import ScoreGameTransition, score_game_transition
 from qotd.usecases.publish_game import publish_manual_game
+from qotd.usecases.get_question_history import MissingQuestionError
 from qotd.usecases.score_submissions import ScoreResponsesConfig, score_responses
 from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
 from qotd.usecases.adjust_score import (
@@ -201,6 +202,24 @@ def test_duplicate_manual_score_event_reuses_its_committed_outcome_intent() -> N
 
     assert duplicate.processed[0].status == "skipped_duplicate"
     assert len(state.score_events) == len(state.outbound_messages) == len(sent) == 1
+
+
+def test_scoring_reports_a_missing_game_with_a_dedicated_error() -> None:
+    with pytest.raises(MissingQuestionError, match="2026-08-07"):
+        score_responses(
+            ScoreResponsesConfig(
+                scoring_date=date(2026, 8, 10),
+                game_date=date(2026, 8, 7),
+                sender="organizer@example.com",
+                organizer="organizer@example.com",
+                gmail_user="organizer@example.com",
+                oauth_client_id="client",
+                oauth_client_secret="secret",
+                oauth_refresh_token="token",
+                state_store=InMemoryCanonicalState(),
+                dry_run=True,
+            )
+        )
 
 
 def test_scoring_retains_late_and_superseded_submissions_but_events_link_only_selected_submission() -> None:

@@ -9,6 +9,10 @@ from qotd.domain.models import StoredQuestion
 from qotd.external.storage.canonical import CanonicalState
 
 
+class MissingQuestionError(RuntimeError):
+    """Raised when a requested Game has not been published."""
+
+
 def stored_question_from_game(game: Game) -> StoredQuestion:
     """Adapt a canonical Game for Question rendering."""
 
@@ -43,7 +47,7 @@ def load_question_for_game_date(state: object, game_date: date) -> StoredQuestio
 
     question = find_question_for_game_date(state, game_date)
     if question is None:
-        raise RuntimeError(f"No stored QOTD question found for {game_date.isoformat()}")
+        raise MissingQuestionError(f"No stored QOTD question found for {game_date.isoformat()}")
     return question
 
 
