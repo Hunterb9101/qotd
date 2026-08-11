@@ -134,6 +134,8 @@ class BQAdapter(CanonicalState):
             if isinstance(value, dict):
                 value = json.dumps(value)
                 parameter_type = "STRING"
+            elif value is None:
+                parameter_type = "TIMESTAMP" if name.endswith("_at") else "STRING"
             elif isinstance(value, bool):
                 parameter_type = "BOOL"
             elif isinstance(value, int):
