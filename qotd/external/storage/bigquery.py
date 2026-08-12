@@ -708,7 +708,28 @@ class BQAdapter(CanonicalState):
 
     def read_scoreboard(self, *, series_id: str) -> tuple[ScoreboardEntry, ...]:
         rows = self.query_rows(
-            f"SELECT series_id, player_id, email, score FROM `{self.table('scoreboard')}` WHERE series_id = @series_id",
+            f"""
+            WITH scoreboard_players AS (
+              SELECT games.series_id, submissions.player_id
+              FROM `{self.table('submissions')}` AS submissions
+              JOIN `{self.table('games')}` AS games ON games.id = submissions.game_id
+              UNION DISTINCT
+              SELECT series_id, player_id FROM `{self.table('score_events')}`
+            )
+            SELECT
+              scoreboard_players.series_id,
+              players.id AS player_id,
+              players.email,
+              COALESCE(SUM(score_events.points_delta), 0) AS score
+            FROM scoreboard_players
+            JOIN `{self.table('players')}` AS players ON players.id = scoreboard_players.player_id
+            LEFT JOIN `{self.table('score_events')}` AS score_events
+              ON score_events.player_id = players.id
+              AND score_events.series_id = scoreboard_players.series_id
+            WHERE scoreboard_players.series_id = @series_id
+            GROUP BY scoreboard_players.series_id, players.id, players.email
+            ORDER BY score DESC, players.email
+            """,
             self._parameters({"series_id": series_id}),
         )
         return tuple(ScoreboardEntry(**row) for row in rows)

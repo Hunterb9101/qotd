@@ -96,11 +96,11 @@ CREATE TABLE IF NOT EXISTS outbound_messages (
 CREATE OR REPLACE VIEW scoreboard AS
 WITH scoreboard_players AS (
   SELECT games.series_id, submissions.player_id
-  FROM submissions
-  JOIN games ON games.id = submissions.game_id
+  FROM `{{PROJECT_ID}}.{{DATASET_ID}}.submissions` AS submissions
+  JOIN `{{PROJECT_ID}}.{{DATASET_ID}}.games` AS games ON games.id = submissions.game_id
   UNION DISTINCT
   SELECT series_id, player_id
-  FROM score_events
+  FROM `{{PROJECT_ID}}.{{DATASET_ID}}.score_events`
 )
 SELECT
   scoreboard_players.series_id,
@@ -108,8 +108,8 @@ SELECT
   players.email,
   COALESCE(SUM(score_events.points_delta), 0) AS score
 FROM scoreboard_players
-JOIN players ON players.id = scoreboard_players.player_id
-LEFT JOIN score_events
+JOIN `{{PROJECT_ID}}.{{DATASET_ID}}.players` AS players ON players.id = scoreboard_players.player_id
+LEFT JOIN `{{PROJECT_ID}}.{{DATASET_ID}}.score_events` AS score_events
   ON score_events.player_id = players.id
   AND score_events.series_id = scoreboard_players.series_id
 GROUP BY scoreboard_players.series_id, players.id, players.email

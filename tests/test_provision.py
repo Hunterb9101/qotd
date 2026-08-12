@@ -65,8 +65,8 @@ def test_canonical_schema_declares_logical_key_fields() -> None:
 
 def test_scoreboard_is_a_view_derived_from_submissions_and_score_events() -> None:
     assert "create or replace view scoreboard" in SQL
-    assert "from submissions" in SQL
-    assert "left join score_events" in SQL
+    assert "from `{{project_id}}.{{dataset_id}}.submissions`" in SQL
+    assert "left join `{{project_id}}.{{dataset_id}}.score_events`" in SQL
     assert "coalesce(sum(score_events.points_delta), 0) as score" in SQL
 
 
@@ -133,6 +133,7 @@ def test_provision_validates_the_existing_target_then_applies_schema() -> None:
 
     assert len(client.queries) == 1
     assert "create table if not exists series" in client.queries[0][0].lower()
+    assert "`valid-project.qotd.submissions`" in client.queries[0][0]
     assert client.queries[0][1]["default_dataset"] == "valid-project.qotd"
 
 

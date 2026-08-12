@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Validate BigQuery scoring SQL without DML
+      - name: Validate all BigQuery SQL without DML
         run: >-
           python -m pytest -m intg tests/external/storage/test_bigquery.py
-          -k dry_run_validates_scoring_transaction_sql
+          -k dry_run_validates_every_canonical_state_query

@@ -15,7 +15,7 @@ import pytest
 
 from datetime import UTC, date, datetime
 
-from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, GAME_SCORED, OUTBOUND_PENDING, OUTBOUND_SENT, PUBLICATION_AUTOMATED, SCORE_EVENT_AUTOMATIC, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission, new_id
+from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, GAME_SCORED, INSTRUCTION_APPLIED, OUTBOUND_PENDING, OUTBOUND_SENT, PUBLICATION_AUTOMATED, SCORE_EVENT_AUTOMATIC, SCORE_EVENT_MANUAL, Game, OrganizerInstruction, OutboundMessage, Player, ScoreEvent, Series, Submission, new_id
 from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS, build_bigquery_state_store
 from qotd.provision import provision_canonical_state
 
@@ -93,6 +93,46 @@ class DryRunBQAdapter(BQAdapter):
         list(self.client.query(script, job_config=job_config).result())
         return []
 
+    def query_rows(self, query: str, parameters: list[Any] | None = None) -> list[dict[str, Any]]:
+        bigquery = importlib.import_module("google.cloud.bigquery")
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=parameters or [],
+            dry_run=True,
+            use_query_cache=False,
+        )
+        list(self.client.query(query, job_config=job_config).result())
+        return []
+
+    def create_or_find_player(self, *, email: str) -> Player:
+        self._merge_record(table_name="players", key="email", values={"id": "dry-run-player", "email": email, "nickname": None})
+        return Player(id="dry-run-player", email=email)
+
+    def create_or_find_series(self, *, name: str, starts_on: Any, ends_on: Any) -> Series:
+        now = datetime(2026, 8, 11, tzinfo=UTC)
+        self._merge_record(
+            table_name="series", key="name",
+            values={"id": "dry-run-series", "name": name, "starts_on": starts_on, "ends_on": ends_on, "created_at": now, "updated_at": now},
+        )
+        return Series("dry-run-series", name, starts_on, ends_on, now, now)
+
+    def reconcile_outbound_message(
+        self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
+    ) -> OutboundMessage:
+        statement = f"""
+            UPDATE `{self.table("outbound_messages")}`
+            SET status = 'sent', source_message_key = @source_message_key, sent_at = @sent_at
+            WHERE idempotency_key = @idempotency_key AND status = 'pending';
+        """
+        self.transaction_rows(
+            statement,
+            self._parameters({"idempotency_key": idempotency_key, "source_message_key": source_message_key, "sent_at": sent_at}),
+        )
+        return OutboundMessage(
+            id="dry-run-outbound", idempotency_key=idempotency_key, message_type="dry-run", recipient="dry-run@example.invalid",
+            subject="Dry run", body_text="Dry run", status=OUTBOUND_SENT, created_at=sent_at,
+            source_message_key=source_message_key, sent_at=sent_at,
+        )
+
 
 def _dry_run_state() -> DryRunBQAdapter:
     required = (
@@ -119,52 +159,59 @@ def _dry_run_state() -> DryRunBQAdapter:
 
 
 @pytest.mark.intg
-def test_bigquery_dry_run_validates_scoring_transaction_sql() -> None:
-    """Use BigQuery's parser to validate the scoring write path without DML."""
+def test_bigquery_dry_run_validates_every_canonical_state_query() -> None:
+    """Use BigQuery's parser for every canonical read and write path without DML."""
 
     state = _dry_run_state()
     now = datetime(2026, 8, 11, tzinfo=UTC)
 
-    state.record_submission(
-        Submission(
-            id="dry-run-submission",
-            source_message_key="dry-run-message",
-            game_id="dry-run-game",
-            player_id="dry-run-player",
-            body_text="A",
-            received_at=now,
-            is_eligible=True,
-            created_at=now,
-            updated_at=now,
-        )
+    series = state.create_or_find_series(name="dry-run-series", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
+    player = state.create_or_find_player(email="dry-run@example.invalid")
+    game = Game(
+        id="dry-run-game", series_id=series.id, day=date(2026, 8, 10), status=GAME_PUBLISHED,
+        publication_mode=PUBLICATION_AUTOMATED, question_prompt="Question", question_options={"A": "One"},
+        publication_subject="QOTD - 08-10-26", published_at=now, publication_message_key="dry-run-publication",
+        deadline_at=now, correct_option="A", answer_source_url="https://example.invalid", created_at=now, updated_at=now,
     )
-    state.score_game(
-        Game(
-            id="dry-run-game",
-            series_id="dry-run-series",
-            day=date(2026, 8, 10),
-            status=GAME_PUBLISHED,
-            publication_mode=PUBLICATION_AUTOMATED,
-            deadline_at=now,
-            correct_option="A",
-            scored_at=now,
-            created_at=now,
-            updated_at=now,
-        ),
-        score_events=(
-            ScoreEvent(
-                id="dry-run-score-event",
-                idempotency_key="dry-run-score-event",
-                player_id="dry-run-player",
-                series_id="dry-run-series",
-                event_type=SCORE_EVENT_AUTOMATIC,
-                points_delta=1,
-                created_at=now,
-                game_id="dry-run-game",
-                submission_id="dry-run-submission",
-            ),
-        ),
+    instruction = OrganizerInstruction(
+        id="dry-run-instruction", source_message_key="dry-run-instruction", sender_email="organizer@example.invalid",
+        subject="Instruction", received_at=now, action="set-answer", status=INSTRUCTION_APPLIED, processed_at=now,
     )
+    outbound = OutboundMessage(
+        id="dry-run-outbound", idempotency_key="dry-run-outbound", message_type="organizer_scoring_update",
+        recipient="organizer@example.invalid", subject="Update", body_text="Update", status=OUTBOUND_PENDING, created_at=now, game_id=game.id,
+    )
+    submission = Submission("dry-run-submission", "dry-run-message", game.id, player.id, "A", now, True, now, now)
+    automatic_event = ScoreEvent(
+        id="dry-run-automatic-event", idempotency_key="dry-run-automatic-event", player_id=player.id, series_id=series.id,
+        event_type=SCORE_EVENT_AUTOMATIC, points_delta=1, created_at=now, game_id=game.id, submission_id=submission.id,
+    )
+    manual_event = ScoreEvent(
+        id="dry-run-manual-event", idempotency_key="dry-run-manual-event", player_id=player.id, series_id=series.id,
+        event_type=SCORE_EVENT_MANUAL, points_delta=1, created_at=now, organizer_instruction_id=instruction.id,
+    )
+
+    state.record_organizer_instruction(instruction)
+    state.record_answer_instruction(instruction=instruction, series=series, game=game, outbound_message=outbound)
+    state.record_organizer_instruction_outcome(instruction=instruction, outbound_message=outbound)
+    state.record_submission(submission)
+    state.publish_game(game, series=series, outbound_message=outbound)
+    state.set_answer(game)
+    state.discard_pending_game(day=game.day)
+    state.replace_pending_game(game, series=series, outbound_message=outbound)
+    state.score_game(replace(game, scored_at=now), score_events=(automatic_event,), outbound_messages=(outbound,))
+    state.record_manual_score_event(manual_event)
+    state.record_instruction_score_event(player=player, instruction=instruction, event=manual_event)
+    state.record_manual_score_event_instruction(player=player, instruction=instruction, event=manual_event, outbound_message=outbound)
+    state.record_outbound_message(outbound)
+    state.reconcile_outbound_message(idempotency_key=outbound.idempotency_key, source_message_key="dry-run-sent", sent_at=now)
+    assert state.find_organizer_instruction(source_message_key=instruction.source_message_key) is None
+    assert state.find_game(day=game.day) is None
+    assert state.find_latest_answered_game_before(day=game.day) is None
+    assert state.find_latest_scored_game_before(day=game.day) is None
+    assert state.find_games_between(starts_on=game.day, ends_on=game.day) == ()
+    assert state.find_outbound_message(idempotency_key=outbound.idempotency_key) is None
+    assert state.read_scoreboard(series_id="dry-run-series") == ()
 
 
 @pytest.mark.intg

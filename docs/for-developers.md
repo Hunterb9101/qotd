@@ -82,10 +82,10 @@ Before any BigQuery write-path change, run the no-write SQL validation against a
 export QOTD_BIGQUERY_DRY_RUN_PROJECT="your-project"
 export QOTD_BIGQUERY_DRY_RUN_DATASET="qotd"
 python -m pytest -m intg tests/external/storage/test_bigquery.py \
-  -k dry_run_validates_scoring_transaction_sql
+  -k dry_run_validates_every_canonical_state_query
 ```
 
-This submits the exact generated Submission and Game-scoring transactions as BigQuery dry runs. It validates GoogleSQL syntax and table references but does not execute DML, modify data, or access Gmail.
+This submits every generated canonical-state read and write query as a BigQuery dry run. It validates GoogleSQL syntax and table references but does not execute DML, modify data, or access Gmail.
 
 GitHub Actions runs this same dry-run validation automatically for every push to `main` in `qotd-bigquery-validate.yml`.
 

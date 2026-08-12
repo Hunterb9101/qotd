@@ -39,4 +39,9 @@ def provision_canonical_state(
     job_config = bigquery.QueryJobConfig(default_dataset=dataset_ref.reference)
     scripts = [LEGACY_RESET, CANONICAL_SCHEMA] if reset_legacy_state else [CANONICAL_SCHEMA]
     for script in scripts:
-        client.query(script.read_text(), job_config=job_config).result()
+        statement = (
+            script.read_text()
+            .replace("{{PROJECT_ID}}", project_id)
+            .replace("{{DATASET_ID}}", dataset)
+        )
+        client.query(statement, job_config=job_config).result()
