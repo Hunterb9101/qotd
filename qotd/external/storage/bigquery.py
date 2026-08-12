@@ -234,6 +234,8 @@ class BQAdapter(CanonicalState):
         game_source = ", ".join(
             f"(SELECT id FROM `{self.table('series')}` WHERE name = @series_name) AS series_id"
             if field == "series_id"
+            else f"PARSE_JSON(@game_{field}) AS {field}"
+            if isinstance(game_values[f"game_{field}"], dict)
             else f"@game_{field} AS {field}"
             for field in game_fields
         )

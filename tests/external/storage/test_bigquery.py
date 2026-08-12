@@ -437,6 +437,24 @@ def test_record_submission_classifies_deadline_and_supersession_in_one_transacti
     assert "later.source_message_key > selected_submission.source_message_key" in sql
 
 
+def test_record_answer_instruction_parses_question_options_as_json() -> None:
+    client = FakeClient([[], []])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+    now = datetime(2026, 8, 11, tzinfo=UTC)
+    instruction = OrganizerInstruction("instruction-1", "message-1", "organizer@example.com", "Answer", now, "set-answer", "applied", now)
+    series = Series("series-1", "2026-08", date(2026, 8, 1), date(2026, 8, 31), now, now)
+    game = Game(
+        "game-1", series.id, date(2026, 8, 10), GAME_PUBLISHED, PUBLICATION_AUTOMATED, now,
+        now, now, question_options={"A": "One"}, correct_option="A",
+    )
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        adapter.record_answer_instruction(instruction=instruction, series=series, game=game)
+
+    assert "PARSE_JSON(@game_question_options) AS question_options" in client.calls[0][0]
+
+
 def test_score_game_writes_game_events_and_outbound_intents_in_one_transaction() -> None:
     client = FakeClient([[]])
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
