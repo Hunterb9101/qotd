@@ -115,6 +115,14 @@ class DryRunBQAdapter(BQAdapter):
         )
         return Series("dry-run-series", name, starts_on, ends_on, now, now)
 
+    def record_submission(self, submission: Submission) -> Submission:
+        try:
+            return super().record_submission(submission)
+        except RuntimeError as exc:
+            if str(exc) != "Submission creation committed without a readable Submission row":
+                raise
+            return submission
+
     def reconcile_outbound_message(
         self, *, idempotency_key: str, source_message_key: str, sent_at: datetime
     ) -> OutboundMessage:
