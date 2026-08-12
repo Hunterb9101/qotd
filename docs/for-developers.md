@@ -87,6 +87,8 @@ python -m pytest -m intg tests/external/storage/test_bigquery.py \
 
 This submits every generated canonical-state read and write query as a BigQuery dry run. It validates GoogleSQL syntax and table references but does not execute DML, modify data, or access Gmail.
 
+The GitHub Actions validation also executes one synthetic idempotent-Submission retry inside a BigQuery transaction and explicitly rolls it back. This verifies BigQuery's runtime retry identity behavior without leaving Player, Game, Submission, or Score Event records behind.
+
 GitHub Actions runs this same dry-run validation automatically for every push to `main` in `qotd-bigquery-validate.yml`.
 
 ## Related Documentation

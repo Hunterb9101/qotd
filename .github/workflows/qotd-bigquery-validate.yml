@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Validate all BigQuery SQL without DML
+      - name: Validate all BigQuery SQL without persistent DML
         run: >-
           python -m pytest -m intg tests/external/storage/test_bigquery.py
-          -k dry_run_validates_every_canonical_state_query
+          -k 'dry_run_validates_every_canonical_state_query or rollback_validates_idempotent_submission_retry_identity'

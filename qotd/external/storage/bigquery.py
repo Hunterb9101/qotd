@@ -371,7 +371,14 @@ class BQAdapter(CanonicalState):
             SELECT * FROM `{self.table('submissions')}` WHERE source_message_key = @source_message_key;
         """
         rows = self.transaction_rows(statement, self._parameters(values))
-        return Submission(**rows[0]) if rows else submission
+        if not rows:
+            rows = self.query_rows(
+                f"SELECT * FROM `{self.table('submissions')}` WHERE source_message_key = @source_message_key",
+                self._parameters({"source_message_key": submission.source_message_key}),
+            )
+        if not rows:
+            raise RuntimeError("Submission creation committed without a readable Submission row")
+        return Submission(**rows[0])
 
     def find_game(self, *, day: Any) -> Game | None:
         """Return the Game for a Day, if one has been published or is pending."""

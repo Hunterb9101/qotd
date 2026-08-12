@@ -215,6 +215,64 @@ def test_bigquery_dry_run_validates_every_canonical_state_query() -> None:
 
 
 @pytest.mark.intg
+def test_bigquery_rollback_validates_idempotent_submission_retry_identity() -> None:
+    """Verify retry identity against BigQuery, then roll back every synthetic write."""
+
+    state = _dry_run_state()
+    run_id = uuid4().hex
+    values = {
+        "player_id": f"rollback-player-{run_id}",
+        "player_email": f"rollback-{run_id}@example.invalid",
+        "submission_id": f"rollback-submission-{run_id}",
+        "retry_submission_id": f"rollback-retry-{run_id}",
+        "source_message_key": f"rollback-message-{run_id}",
+        "game_id": f"rollback-game-{run_id}",
+        "body_text": "A",
+        "received_at": datetime(2026, 8, 11, tzinfo=UTC),
+        "created_at": datetime(2026, 8, 11, tzinfo=UTC),
+        "updated_at": datetime(2026, 8, 11, tzinfo=UTC),
+    }
+    script = f"""
+        DECLARE stored_submission_id STRING;
+        BEGIN TRANSACTION;
+        INSERT INTO `{state.table('players')}` (id, email, nickname)
+        VALUES (@player_id, @player_email, NULL);
+        INSERT INTO `{state.table('submissions')}`
+          (id, source_message_key, game_id, player_id, body_text, received_at, interpreted_option,
+           is_eligible, ineligibility_reason, created_at, updated_at)
+        VALUES
+          (@submission_id, @source_message_key, @game_id, @player_id, @body_text, @received_at, NULL,
+           TRUE, NULL, @created_at, @updated_at);
+        MERGE `{state.table('submissions')}` AS target
+        USING (
+          SELECT @retry_submission_id AS id, @source_message_key AS source_message_key,
+                 @game_id AS game_id, @player_id AS player_id, @body_text AS body_text,
+                 @received_at AS received_at, @created_at AS created_at, @updated_at AS updated_at
+        ) AS source
+        ON target.source_message_key = source.source_message_key
+        WHEN NOT MATCHED THEN
+          INSERT (id, source_message_key, game_id, player_id, body_text, received_at, interpreted_option,
+                  is_eligible, ineligibility_reason, created_at, updated_at)
+          VALUES (source.id, source.source_message_key, source.game_id, source.player_id, source.body_text,
+                  source.received_at, NULL, TRUE, NULL, source.created_at, source.updated_at);
+        SET stored_submission_id = (
+          SELECT id FROM `{state.table('submissions')}` WHERE source_message_key = @source_message_key
+        );
+        ROLLBACK TRANSACTION;
+        SELECT stored_submission_id AS id;
+    """
+    bigquery = importlib.import_module("google.cloud.bigquery")
+    result = list(
+        state.client.query(
+            script,
+            job_config=bigquery.QueryJobConfig(query_parameters=state._parameters(values)),
+        ).result()
+    )
+
+    assert result[0]["id"] == values["submission_id"]
+
+
+@pytest.mark.intg
 def test_bigquery_persists_and_scores_a_player_submission() -> None:
     """Exercise the production SQL against an isolated BigQuery dataset."""
 
@@ -419,11 +477,11 @@ def test_reconcile_outbound_message_reads_the_reconciled_message_after_commit() 
 
 
 def test_record_submission_classifies_deadline_and_supersession_in_one_transaction() -> None:
-    client = FakeClient([[]])
-    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
-    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
     now = datetime(2026, 8, 11, tzinfo=UTC)
     submission = Submission("submission-1", "message-key", "game-1", "player-1", "A", now, True, now, now)
+    client = FakeClient([[submission.__dict__]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
 
     with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
         adapter.record_submission(submission)
@@ -435,6 +493,21 @@ def test_record_submission_classifies_deadline_and_supersession_in_one_transacti
     assert "'superseded'" in sql
     assert "prior.source_message_key < selected_submission.source_message_key" in sql
     assert "later.source_message_key > selected_submission.source_message_key" in sql
+
+
+def test_record_submission_reads_the_existing_submission_after_an_idempotent_retry() -> None:
+    now = datetime(2026, 8, 11, tzinfo=UTC)
+    stored = Submission("stored-submission", "message-key", "game-1", "player-1", "A", now, True, now, now)
+    retry = Submission("new-submission", "message-key", "game-1", "player-1", "A", now, True, now, now)
+    client = FakeClient([[], [stored.__dict__]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        recorded = adapter.record_submission(retry)
+
+    assert recorded.id == stored.id
+    assert "WHERE source_message_key = @source_message_key" in client.calls[1][0]
 
 
 def test_record_answer_instruction_parses_question_options_as_json() -> None:
