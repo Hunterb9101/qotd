@@ -176,6 +176,13 @@ class BQAdapter(CanonicalState):
         rows = self._merge_record(
             table_name="players", key="email", values={"id": new_id(), "email": normalized, "nickname": None}
         )
+        if not rows:
+            rows = self.query_rows(
+                f"SELECT * FROM `{self.table('players')}` WHERE email = @email",
+                self._parameters({"email": normalized}),
+            )
+        if not rows:
+            raise RuntimeError("Player creation committed without a readable Player row")
         row = rows[0]
         return Player(id=str(row["id"]), email=str(row["email"]), nickname=row.get("nickname"))
 

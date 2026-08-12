@@ -116,6 +116,18 @@ def test_create_or_find_player_uses_a_parameterized_idempotent_merge() -> None:
     assert any(parameter.value == "ada@example.com" for parameter in config["query_parameters"])
 
 
+def test_create_or_find_player_reads_the_committed_row_when_a_transaction_returns_no_rows() -> None:
+    client = FakeClient([[], [{"id": "player-1", "email": "ada@example.com", "nickname": None}]])
+    adapter = BQAdapter(project_id="project-id", dataset="qotd", client=client)
+    fake_bigquery = SimpleNamespace(QueryJobConfig=lambda **kwargs: kwargs, ScalarQueryParameter=FakeScalarQueryParameter)
+
+    with patch("qotd.external.storage.bigquery.importlib.import_module", return_value=fake_bigquery):
+        player = adapter.create_or_find_player(email="ada@example.com")
+
+    assert player.id == "player-1"
+    assert "WHERE email = @email" in client.calls[1][0]
+
+
 def test_parameters_preserve_timestamp_type_for_null_timestamp_fields() -> None:
     adapter = BQAdapter(project_id="project-id", dataset="qotd", client=FakeClient([]))
     fake_bigquery = SimpleNamespace(ScalarQueryParameter=FakeScalarQueryParameter)
