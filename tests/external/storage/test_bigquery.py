@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import inspect
+import calendar
+import importlib
+import os
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
+from dataclasses import replace
+from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 
 from datetime import UTC, date, datetime
 
-from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, OUTBOUND_PENDING, OUTBOUND_SENT, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission
-from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS
+from qotd.domain.canonical import GAME_PENDING, GAME_PUBLISHED, GAME_SCORED, OUTBOUND_PENDING, OUTBOUND_SENT, PUBLICATION_AUTOMATED, SCORE_EVENT_AUTOMATIC, Game, OrganizerInstruction, OutboundMessage, ScoreEvent, Series, Submission, new_id
+from qotd.external.storage.bigquery import BQAdapter, MAX_TRANSACTION_ATTEMPTS, build_bigquery_state_store
+from qotd.provision import provision_canonical_state
 
 
 class FakeResult:
@@ -38,6 +46,193 @@ class FakeScalarQueryParameter:
         self.name = name
         self.parameter_type = parameter_type
         self.value = value
+
+
+def _integration_state():
+    required = (
+        "QOTD_BIGQUERY_TEST_PROJECT",
+        "QOTD_BIGQUERY_TEST_DATASET",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_REFRESH_TOKEN",
+    )
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        pytest.fail(
+            "Live BigQuery integration tests require: " + ", ".join(missing),
+            pytrace=False,
+        )
+
+    project_id = os.environ["QOTD_BIGQUERY_TEST_PROJECT"]
+    dataset = os.environ["QOTD_BIGQUERY_TEST_DATASET"]
+    if not dataset.endswith("_test"):
+        pytest.fail("QOTD_BIGQUERY_TEST_DATASET must end in '_test'", pytrace=False)
+    state = build_bigquery_state_store(
+        project_id=project_id,
+        dataset=dataset,
+        oauth_client_id=os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+        oauth_client_secret=os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        oauth_refresh_token=os.environ["GOOGLE_OAUTH_REFRESH_TOKEN"],
+    )
+    provision_canonical_state(client=state.client, project_id=project_id, dataset=dataset)
+    return state
+
+
+class DryRunBQAdapter(BQAdapter):
+    """Validate generated transaction SQL through BigQuery without executing DML."""
+
+    def transaction_rows(self, statement: str, parameters: list[Any]) -> list[dict[str, Any]]:
+        bigquery = importlib.import_module("google.cloud.bigquery")
+        declarations, transactional_statement = self._split_leading_declarations(statement)
+        script = f"{declarations}BEGIN TRANSACTION;\n{transactional_statement}\nCOMMIT TRANSACTION;"
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=parameters,
+            dry_run=True,
+            use_query_cache=False,
+        )
+        list(self.client.query(script, job_config=job_config).result())
+        return []
+
+
+def _dry_run_state() -> DryRunBQAdapter:
+    required = (
+        "QOTD_BIGQUERY_DRY_RUN_PROJECT",
+        "QOTD_BIGQUERY_DRY_RUN_DATASET",
+        "GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_REFRESH_TOKEN",
+    )
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        pytest.fail(
+            "BigQuery dry-run validation requires: " + ", ".join(missing),
+            pytrace=False,
+        )
+    state = build_bigquery_state_store(
+        project_id=os.environ["QOTD_BIGQUERY_DRY_RUN_PROJECT"],
+        dataset=os.environ["QOTD_BIGQUERY_DRY_RUN_DATASET"],
+        oauth_client_id=os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+        oauth_client_secret=os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+        oauth_refresh_token=os.environ["GOOGLE_OAUTH_REFRESH_TOKEN"],
+    )
+    return DryRunBQAdapter(project_id=state.project_id, dataset=state.dataset, client=state.client)
+
+
+@pytest.mark.intg
+def test_bigquery_dry_run_validates_scoring_transaction_sql() -> None:
+    """Use BigQuery's parser to validate the scoring write path without DML."""
+
+    state = _dry_run_state()
+    now = datetime(2026, 8, 11, tzinfo=UTC)
+
+    state.record_submission(
+        Submission(
+            id="dry-run-submission",
+            source_message_key="dry-run-message",
+            game_id="dry-run-game",
+            player_id="dry-run-player",
+            body_text="A",
+            received_at=now,
+            is_eligible=True,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    state.score_game(
+        Game(
+            id="dry-run-game",
+            series_id="dry-run-series",
+            day=date(2026, 8, 10),
+            status=GAME_PUBLISHED,
+            publication_mode=PUBLICATION_AUTOMATED,
+            deadline_at=now,
+            correct_option="A",
+            scored_at=now,
+            created_at=now,
+            updated_at=now,
+        ),
+        score_events=(
+            ScoreEvent(
+                id="dry-run-score-event",
+                idempotency_key="dry-run-score-event",
+                player_id="dry-run-player",
+                series_id="dry-run-series",
+                event_type=SCORE_EVENT_AUTOMATIC,
+                points_delta=1,
+                created_at=now,
+                game_id="dry-run-game",
+                submission_id="dry-run-submission",
+            ),
+        ),
+    )
+
+
+@pytest.mark.intg
+def test_bigquery_persists_and_scores_a_player_submission() -> None:
+    """Exercise the production SQL against an isolated BigQuery dataset."""
+
+    state = _integration_state()
+    run_id = uuid4().hex
+    game_day = date(2100, 1, 1) + timedelta(days=int(run_id[:6], 16) % 36500)
+    now = datetime.now(UTC)
+    series = state.create_or_find_series(
+        name=f"integration-{run_id}",
+        starts_on=game_day.replace(day=1),
+        ends_on=game_day.replace(day=calendar.monthrange(game_day.year, game_day.month)[1]),
+    )
+    player = state.create_or_find_player(email=f"qotd-integration-{run_id}@example.invalid")
+    game = state.publish_game(
+        Game(
+            id=new_id(),
+            series_id=series.id,
+            day=game_day,
+            status=GAME_PUBLISHED,
+            publication_mode=PUBLICATION_AUTOMATED,
+            question_prompt="Integration test question",
+            question_options={"A": "Correct", "B": "Incorrect", "C": "Incorrect", "D": "Incorrect"},
+            publication_subject="QOTD integration test",
+            published_at=now,
+            publication_message_key=f"integration-publication-{run_id}",
+            deadline_at=now + timedelta(hours=1),
+            correct_option="A",
+            answer_source_url="https://example.invalid/source",
+            created_at=now,
+            updated_at=now,
+        ),
+        series=series,
+    )
+    submission = state.record_submission(
+        Submission(
+            id=new_id(),
+            source_message_key=f"integration-submission-{run_id}",
+            game_id=game.id,
+            player_id=player.id,
+            body_text="A",
+            received_at=now,
+            is_eligible=True,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    scored = state.score_game(
+        replace(game, scored_at=now, updated_at=now),
+        score_events=(
+            ScoreEvent(
+                id=new_id(),
+                idempotency_key=f"integration-score-{run_id}",
+                player_id=player.id,
+                series_id=series.id,
+                event_type=SCORE_EVENT_AUTOMATIC,
+                points_delta=1,
+                created_at=now,
+                game_id=game.id,
+                submission_id=submission.id,
+            ),
+        ),
+    )
+
+    assert scored.status == GAME_SCORED
+    assert state.read_scoreboard(series_id=series.id)[0].score == 1
 
 
 def test_transaction_rows_uses_parameter_binding_and_a_transaction_script() -> None:
@@ -191,8 +386,8 @@ def test_record_submission_classifies_deadline_and_supersession_in_one_transacti
     assert "item.received_at < game.deadline_at" in sql
     assert "'late'" in sql
     assert "'superseded'" in sql
-    assert "prior.source_message_key < current.source_message_key" in sql
-    assert "later.source_message_key > current.source_message_key" in sql
+    assert "prior.source_message_key < selected_submission.source_message_key" in sql
+    assert "later.source_message_key > selected_submission.source_message_key" in sql
 
 
 def test_score_game_writes_game_events_and_outbound_intents_in_one_transaction() -> None:

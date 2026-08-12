@@ -63,6 +63,32 @@ OPENAI_API_KEY="..." pytest -m intg
 
 Set `OPENAI_INTERPRETER_MODEL` to select the live evaluation model. Explicit integration runs fail with a configuration error when `OPENAI_API_KEY` is missing.
 
+Canonical BigQuery changes must also pass the isolated-storage integration test before deployment. Create an empty non-production dataset whose name ends in `_test`, then configure it separately from production:
+
+```bash
+export QOTD_BIGQUERY_TEST_PROJECT="your-test-project"
+export QOTD_BIGQUERY_TEST_DATASET="qotd_test"
+export GOOGLE_OAUTH_CLIENT_ID="..."
+export GOOGLE_OAUTH_CLIENT_SECRET="..."
+export GOOGLE_OAUTH_REFRESH_TOKEN="..."
+python -m pytest -m intg tests/external/storage/test_bigquery_integration.py
+```
+
+The test applies the canonical schema only to that test dataset, writes a uniquely named Player, Game, Submission, and Score Event, and verifies the resulting Scoreboard. It never sends email and refuses any dataset not ending in `_test`.
+
+Before any BigQuery write-path change, run the no-write SQL validation against an existing dataset with the canonical schema:
+
+```bash
+export QOTD_BIGQUERY_DRY_RUN_PROJECT="your-project"
+export QOTD_BIGQUERY_DRY_RUN_DATASET="qotd"
+python -m pytest -m intg tests/external/storage/test_bigquery.py \
+  -k dry_run_validates_scoring_transaction_sql
+```
+
+This submits the exact generated Submission and Game-scoring transactions as BigQuery dry runs. It validates GoogleSQL syntax and table references but does not execute DML, modify data, or access Gmail.
+
+GitHub Actions runs this same dry-run validation automatically for every push to `main` in `qotd-bigquery-validate.yml`.
+
 ## Related Documentation
 
 - [Technical notes](technical-notes.md)

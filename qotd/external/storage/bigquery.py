@@ -344,26 +344,26 @@ class BQAdapter(CanonicalState):
             WHERE item.source_message_key = @source_message_key AND item.game_id = game.id;
             UPDATE `{self.table('submissions')}` AS prior
             SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
-            FROM `{self.table('submissions')}` AS current
-            WHERE current.source_message_key = @source_message_key
-              AND current.is_eligible
-              AND prior.game_id = current.game_id AND prior.player_id = current.player_id
+            FROM `{self.table('submissions')}` AS selected_submission
+            WHERE selected_submission.source_message_key = @source_message_key
+              AND selected_submission.is_eligible
+              AND prior.game_id = selected_submission.game_id AND prior.player_id = selected_submission.player_id
               AND prior.is_eligible
               AND (
-                prior.received_at < current.received_at
-                OR (prior.received_at = current.received_at AND prior.source_message_key < current.source_message_key)
+                prior.received_at < selected_submission.received_at
+                OR (prior.received_at = selected_submission.received_at AND prior.source_message_key < selected_submission.source_message_key)
               );
-            UPDATE `{self.table('submissions')}` AS current
+            UPDATE `{self.table('submissions')}` AS selected_submission
             SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
-            WHERE current.source_message_key = @source_message_key
-              AND current.is_eligible
+            WHERE selected_submission.source_message_key = @source_message_key
+              AND selected_submission.is_eligible
               AND EXISTS (
                 SELECT 1 FROM `{self.table('submissions')}` AS later
-                WHERE later.game_id = current.game_id AND later.player_id = current.player_id
+                WHERE later.game_id = selected_submission.game_id AND later.player_id = selected_submission.player_id
                   AND later.is_eligible
                   AND (
-                    later.received_at > current.received_at
-                    OR (later.received_at = current.received_at AND later.source_message_key > current.source_message_key)
+                    later.received_at > selected_submission.received_at
+                    OR (later.received_at = selected_submission.received_at AND later.source_message_key > selected_submission.source_message_key)
                   )
               );
             SELECT * FROM `{self.table('submissions')}` WHERE source_message_key = @source_message_key;
