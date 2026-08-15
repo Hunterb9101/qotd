@@ -7,11 +7,15 @@ from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTop
 from qotd.external.web_search.core import WebSearchResult
 from qotd.usecases.generate_question import (
     GenerateResearchedQuestionConfig,
+    LLMQuestionEvaluator,
+    LLMQuestionGenerator,
     choose_category,
     choose_lens_pairs,
     generate_researched_question,
     validate_researched_candidate,
 )
+from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
+from qotd.usecases.repair_question import RepairGeneratedQuestion
 
 
 class FakeWebSearchClient:
@@ -23,6 +27,50 @@ class FakeWebSearchClient:
         self.calls.append((query, limit))
         index = min(len(self.calls) - 1, len(self.responses) - 1)
         return self.responses[index]
+
+
+class RecordingLLM:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.evaluation_count = 0
+
+    def create_structured_response(self, **kwargs: object):
+        self.calls.append(kwargs)
+        model = kwargs["response_model"]
+        schema_name = kwargs["schema_name"]
+        if schema_name == "qotd_topic_discovery":
+            return model.model_validate({"topics": [{"title": "Space", "summary": "Planet facts"}]})
+        if schema_name == "qotd_generated_question":
+            return model.model_validate(_generated_question_payload())
+        if schema_name == "qotd_question_quality_review":
+            self.evaluation_count += 1
+            return model.model_validate({
+                "approved": self.evaluation_count > 1,
+                "rejection_reasons": [] if self.evaluation_count > 1 else ["Make the wording clearer"],
+            })
+        if schema_name == "qotd_repaired_question":
+            return model.model_validate(_repaired_question_payload())
+        raise AssertionError(f"Unexpected schema: {schema_name}")
+
+
+def _generated_question_payload() -> dict[str, object]:
+    return {
+        "topic": "Mars",
+        "prompt": "Which planet is known as the Red Planet?",
+        "options": {"A": "Venus", "B": "Jupiter", "C": "Mars", "D": "Mercury"},
+        "correct_option": "C",
+        "source_note": "NASA facts",
+        "sources": [{"url": "https://example.com/mars", "evidence": "Mars is the Red Planet."}],
+    }
+
+
+def _repaired_question_payload() -> dict[str, object]:
+    return {
+        "prompt": "Which planet is called the Red Planet?",
+        "options": {"A": "Venus", "B": "Jupiter", "C": "Mars", "D": "Mercury"},
+        "correct_option": "C",
+        "source_note": "NASA facts",
+    }
 
 
 def evidence(*, snippet: str = "USDA reports Wisconsin produced the most cheese in the United States.") -> WebSearchResult:
@@ -53,6 +101,32 @@ def candidate_for(topic: QuestionTopic, category: str, game_date: date) -> Gener
 
 
 class ResearchedQuestionGenerationTests(unittest.TestCase):
+    def test_llm_calls_share_the_publish_question_usecase_run_id(self) -> None:
+        llm = RecordingLLM()
+
+        generate_researched_question(
+            GenerateResearchedQuestionConfig(
+                game_date=date(2026, 7, 10), categories=("Science",), usecase_run_id="publish-run"
+            ),
+            search_client=LLMTopicDiscoverer(llm_client=llm),
+            generate_question=LLMQuestionGenerator(llm_client=llm),
+            repair_question=RepairGeneratedQuestion(llm_client=llm),
+            evaluate_question=LLMQuestionEvaluator(llm_client=llm),
+        )
+
+        self.assertEqual(
+            [call["prompt_path"].stem for call in llm.calls],
+            [
+                "discover_question_topics",
+                "generate_question_for_topic",
+                "evaluate_generated_question",
+                "repair_generated_question",
+                "evaluate_generated_question",
+            ],
+        )
+        self.assertEqual({call["use_case"] for call in llm.calls}, {"publish_question"})
+        self.assertEqual({call["usecase_run_id"] for call in llm.calls}, {"publish-run"})
+
     def test_category_selection_is_reproducible_with_game_date_seed(self) -> None:
         categories = ("Science", "History", "Food")
 

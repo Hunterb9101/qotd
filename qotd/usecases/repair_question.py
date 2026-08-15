@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question
 from qotd.external.llm.core import LLMClient
+from qotd.domain.canonical import new_id
 
 
 DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "repair_generated_question.md"
@@ -57,6 +58,7 @@ class RepairGeneratedQuestion:
     llm_client: LLMClient
     prompt_path: Path = DEFAULT_REPAIR_PROMPT_PATH
     max_output_tokens: int = 8000
+    usecase_run_id: str = ""
 
     def __call__(
         self,
@@ -92,6 +94,8 @@ class RepairGeneratedQuestion:
             response_model=RepairedQuestionOutput,
             schema_name="qotd_repaired_question",
             max_output_tokens=self.max_output_tokens,
+            use_case="publish_question",
+            usecase_run_id=self.usecase_run_id or new_id(),
         )
         options, correct_option = shuffle_answer_options(
             data.options.model_dump(), data.correct_option

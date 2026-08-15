@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 
 from qotd.domain.canonical import (
+    AICall,
     Game,
     OrganizerInstruction,
     OutboundMessage,
@@ -22,6 +23,9 @@ class CanonicalState(ABC):
 
     @abstractmethod
     def create_or_find_player(self, *, email: str) -> Player: ...
+
+    @abstractmethod
+    def record_ai_call(self, ai_call: AICall) -> AICall: ...
 
     @abstractmethod
     def create_or_find_series(self, *, name: str, starts_on: date, ends_on: date) -> Series: ...

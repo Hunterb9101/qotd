@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 import re
 
 from qotd.domain.canonical import (
+    AICall,
     GAME_PUBLISHED,
     GAME_SCORED,
     INSTRUCTION_DUPLICATE,
@@ -68,6 +69,7 @@ class InMemoryCanonicalState(CanonicalState):
 
     def __init__(self, *, clock: FixedClock | None = None) -> None:
         self.players: dict[str, Player] = {}
+        self.ai_calls: dict[str, AICall] = {}
         self.series: dict[str, Series] = {}
         self.games: dict[str, Game] = {}
         self.instructions: dict[str, OrganizerInstruction] = {}
@@ -84,6 +86,10 @@ class InMemoryCanonicalState(CanonicalState):
         player = Player(id=new_id(), email=normalized)
         self.players[player.id] = player
         return player
+
+    def record_ai_call(self, ai_call: AICall) -> AICall:
+        self.ai_calls[ai_call.id] = ai_call
+        return ai_call
 
     def create_or_find_series(self, *, name: str, starts_on: date, ends_on: date) -> Series:
         for series in self.series.values():

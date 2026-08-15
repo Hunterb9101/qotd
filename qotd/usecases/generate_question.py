@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from itertools import product
 from pathlib import Path
@@ -17,6 +17,7 @@ from qotd.domain.generator import shuffle_answer_options
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.domain.validation import validate_question
 from qotd.external.llm.core import LLMClient
+from qotd.domain.canonical import new_id
 from qotd.external.web_search.core import (
     WebSearchClient,
     WebSearchResult,
@@ -138,6 +139,7 @@ class LLMQuestionGenerator:
     prompt_path: Path = DEFAULT_PROMPT_PATH
     max_output_tokens: int = 24000
     use_web_search: bool = False
+    usecase_run_id: str = ""
 
     def __call__(
         self,
@@ -166,6 +168,8 @@ class LLMQuestionGenerator:
             schema_name="qotd_generated_question",
             max_output_tokens=self.max_output_tokens,
             tools=({"type": "web_search"},) if self.use_web_search else (),
+            use_case="publish_question",
+            usecase_run_id=self.usecase_run_id or new_id(),
         )
         evidence_by_url = {result.url: result.snippet for result in evidence}
         source_urls = tuple(source.url for source in data.sources)
@@ -199,6 +203,7 @@ class LLMQuestionEvaluator:
     llm_client: LLMClient
     prompt_path: Path = DEFAULT_EVALUATION_PROMPT_PATH
     max_output_tokens: int = 4000
+    usecase_run_id: str = ""
 
     def __call__(self, candidate: GeneratedQuestionCandidate, /) -> tuple[str, ...]:
         """Return concise, actionable reasons when a candidate should be regenerated."""
@@ -221,6 +226,8 @@ class LLMQuestionEvaluator:
             response_model=QuestionQualityReviewOutput,
             schema_name="qotd_question_quality_review",
             max_output_tokens=self.max_output_tokens,
+            use_case="publish_question",
+            usecase_run_id=self.usecase_run_id or new_id(),
         )
         reasons = tuple(reason.strip() for reason in data.rejection_reasons if reason.strip())
         if data.approved:
@@ -237,6 +244,7 @@ class GenerateResearchedQuestionConfig:
     seed: str | int | None = None
     attempts: int = 3
     search_result_limit: int = 5
+    usecase_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -471,6 +479,11 @@ def generate_researched_question(
     if config.search_result_limit < 1:
         raise ValueError("search_result_limit must be at least 1")
 
+    usecase_run_id = config.usecase_run_id or new_id()
+    search_client = _with_usecase_run_id(search_client, usecase_run_id)
+    generate_question = _with_usecase_run_id(generate_question, usecase_run_id)
+    repair_question = _with_usecase_run_id(repair_question, usecase_run_id)
+    evaluate_question = _with_usecase_run_id(evaluate_question, usecase_run_id)
     seed = config.seed if config.seed is not None else config.game_date.isoformat()
     category = choose_category(config.categories, seed=seed)
     lenses = choose_lens_pairs(1, seed=seed)[0]
@@ -532,3 +545,11 @@ def generate_researched_question(
     if alert_organizer is not None:
         alert_organizer(message)
     raise RuntimeError(message)
+
+
+def _with_usecase_run_id(component: object | None, usecase_run_id: str) -> object | None:
+    """Attach one run identifier to concrete LLM collaborators without constraining test doubles."""
+
+    if component is not None and hasattr(component, "usecase_run_id"):
+        return replace(component, usecase_run_id=usecase_run_id)
+    return component
