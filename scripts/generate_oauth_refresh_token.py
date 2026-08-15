@@ -31,11 +31,13 @@ def main() -> None:
     )
     credentials = flow.run_local_server(port=0, prompt="consent")
     client_config = flow.client_config
+    refresh_lifetime = flow.oauth2session.token.get("refresh_token_expires_in")
 
     print("Add these values to the GitHub production environment secrets:")
     print(f"GOOGLE_OAUTH_CLIENT_ID={client_config['client_id']}")
     print(f"GOOGLE_OAUTH_CLIENT_SECRET={client_config['client_secret']}")
     print(f"GOOGLE_OAUTH_REFRESH_TOKEN={credentials.refresh_token}")
+    print(f"Refresh token expires in {(refresh_lifetime / 86400) if refresh_lifetime else -1} days")
 
 
 if __name__ == "__main__":
