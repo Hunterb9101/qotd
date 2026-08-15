@@ -63,6 +63,7 @@ conflicts with either source, the Definitions and ADR-004 take precedence.
 - 6.20 On the final weekday Game Day of each calendar month, the system will announce all Players tied for the highest Score as monthly Winners.
 - 6.21 After announcing monthly Winners, the system will start the next monthly Series.
 - 6.22 The system will provide a basic way for an Organizer to create a manual Score Event when needed.
+- 6.23 Only an approved Organizer Instruction may trigger a Manual Score Event outcome. Player Submissions and messages from non-Organizers are outside this workflow: they receive no outcome, remain unread, and are left for Submission processing.
 - 6.24 The system will identify non-respondents only among Players on the current Series Scoreboard.
 - 6.25 The Scoreboard will include each Player with a Submission or Score Event in the current Series, including Players with zero or negative Scores.
 

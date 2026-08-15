@@ -160,6 +160,30 @@ def test_malformed_manual_score_event_email_is_durably_rejected() -> None:
     assert next(iter(state.instructions.values())).status == "rejected"
 
 
+def test_manual_score_event_ignores_a_player_submission() -> None:
+    state = InMemoryCanonicalState()
+    sent: list[EmailMessage] = []
+    handled: list[str] = []
+    submission = ParsedEmailMessage(
+        "submission", "thread", "player@example.com", "Re: QOTD", datetime(2026, 8, 11, tzinfo=UTC), "A"
+    )
+
+    result = process_manual_score_event_emails(
+        ProcessManualScoreEventEmailsConfig(
+            sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
+            oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
+        ),
+        fetch_messages=lambda _query: [submission],
+        send_message=lambda message: sent.append(message) or "response",
+        mark_message_handled=handled.append,
+    )
+
+    assert result.processed == ()
+    assert state.instructions == state.outbound_messages == {}
+    assert sent == []
+    assert handled == []
+
+
 def test_manual_score_event_commits_instruction_event_and_outcome_before_delivery() -> None:
     state = InMemoryCanonicalState()
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
@@ -167,17 +191,21 @@ def test_manual_score_event_commits_instruction_event_and_outcome_before_deliver
     state.publish_game(Game(new_id(), series.id, game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), correct_option="A"))
     message = ParsedEmailMessage("instruction", "thread", "organizer@example.com", "Correction", datetime(2026, 8, 11, tzinfo=UTC), "Action: record-score-event\nPlayer: ada@example.com\nDay: 2026-08-10\nPoints: 2\nReason: correction")
 
-    def send(_message: EmailMessage) -> str:
+    handled: list[str] = []
+
+    def send(outgoing: EmailMessage) -> str:
         assert len(state.instructions) == len(state.score_events) == len(state.outbound_messages) == 1
+        assert outgoing["To"] == "organizer@example.com"
         return "outcome"
 
     result = process_manual_score_event_emails(
         ProcessManualScoreEventEmailsConfig(sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",), oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state),
-        fetch_messages=lambda _query: [message], send_message=send, mark_message_handled=lambda _message_id: None,
+        fetch_messages=lambda _query: [message], send_message=send, mark_message_handled=handled.append,
     )
 
     assert result.processed[0].status == "applied"
     assert next(iter(state.outbound_messages.values())).status == OUTBOUND_SENT
+    assert handled == ["instruction"]
 
 
 def test_duplicate_manual_score_event_reuses_its_committed_outcome_intent() -> None:

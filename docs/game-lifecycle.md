@@ -130,6 +130,12 @@ Each Organizer Instruction has an idempotency identity and an observable outcome
 [**Organizer Instruction**](DEFINITIONS.md#organizer-instruction) that creates a manual
 [**Score Event**](DEFINITIONS.md#score-event).
 
+Only an approved [**Organizer Instruction**](DEFINITIONS.md#organizer-instruction)
+may trigger a Manual Score Event outcome. [**Player**](DEFINITIONS.md#player)
+[**Submissions**](DEFINITIONS.md#submission) and messages from non-Organizers are
+outside this workflow: they receive no outcome, remain unread, and are left for
+Submission processing.
+
 1. Record receipt of the [**Organizer Instruction**](DEFINITIONS.md#organizer-instruction) and
    validate its sender and fields.
 2. Resolve the targeted [**Player**](DEFINITIONS.md#player) and either [**Game**](DEFINITIONS.md#game)
