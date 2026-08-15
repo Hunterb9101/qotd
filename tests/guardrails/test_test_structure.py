@@ -13,6 +13,7 @@ TESTS_ROOT = PROJECT_ROOT / "tests"
 # Paths are relative to ``tests/``. Add narrowly-scoped exceptions here rather
 # than weakening the matching rule for the rest of the suite.
 TEST_STRUCTURE_IGNORES = (
+    "acceptance/**", # Allows for behavioral tests tied to PRD requirements
     "guardrails/**",
 )
 

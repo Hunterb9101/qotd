@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, date, datetime
-import re
+from datetime import date, datetime
 
 from qotd.domain.canonical import (
     AICall,
@@ -20,54 +19,14 @@ from qotd.domain.canonical import (
     Submission,
     new_id,
 )
-from qotd.external.email.core import ParsedEmailMessage
+from qotd.domain.clock import Clock, SystemClock
 from qotd.external.storage.canonical import CanonicalState
 
 
-class FixedClock:
-    """Deterministic source of workflow timestamps for business-flow tests."""
+class InMemoryAdapter(CanonicalState):
+    """Stateful canonical storage implementation for deterministic workflows."""
 
-    def __init__(self, now: datetime) -> None:
-        self._now = now
-
-    def now(self) -> datetime:
-        return self._now
-
-
-class InMemoryMailbox:
-    """Complete parsed-email fixtures with the predicates used by QOTD workflows."""
-
-    def __init__(self, messages: list[ParsedEmailMessage] | None = None) -> None:
-        self.messages = messages or []
-        self.sent: list[ParsedEmailMessage] = []
-        self.unread_message_ids = {message.message_id for message in self.messages}
-
-    def search(self, query: str) -> list[ParsedEmailMessage]:
-        """Return messages matching QOTD's subject, sender, and unread predicates."""
-
-        matches = list(self.messages)
-        sender = re.search(r"(?:^|\s)from:([^\s]+)", query)
-        if sender:
-            matches = [message for message in matches if message.sender_email == sender.group(1)]
-        subject = re.search(r'subject:"([^"]+)"', query)
-        if subject:
-            matches = [message for message in matches if subject.group(1) in message.subject]
-        if "is:unread" in query:
-            matches = [message for message in matches if message.message_id in self.unread_message_ids]
-        return matches
-
-    def send(self, message: ParsedEmailMessage) -> str:
-        self.sent.append(message)
-        return message.message_id
-
-    def mark_read(self, message_id: str) -> None:
-        self.unread_message_ids.discard(message_id)
-
-
-class InMemoryCanonicalState(CanonicalState):
-    """Stateful canonical storage implementation for business-flow tests."""
-
-    def __init__(self, *, clock: FixedClock | None = None) -> None:
+    def __init__(self, *, clock: Clock | None = None) -> None:
         self.players: dict[str, Player] = {}
         self.ai_calls: dict[str, AICall] = {}
         self.series: dict[str, Series] = {}
@@ -76,7 +35,7 @@ class InMemoryCanonicalState(CanonicalState):
         self.submissions: dict[str, Submission] = {}
         self.score_events: dict[str, ScoreEvent] = {}
         self.outbound_messages: dict[str, OutboundMessage] = {}
-        self.clock = clock or FixedClock(datetime(2026, 1, 1, tzinfo=UTC))
+        self.clock = clock or SystemClock()
 
     def create_or_find_player(self, *, email: str) -> Player:
         normalized = email.strip().lower()

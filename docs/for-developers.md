@@ -97,4 +97,5 @@ GitHub Actions runs this same dry-run validation automatically for every push to
 - [Tone guidelines](qotd_tone_guidelines.md)
 - [Game lifecycle](game-lifecycle.md)
 - [Architecture decision: automatic sending](adr/adr-001-auto-send.md)
+- [Architecture decision: deterministic behavioral testing](adr/adr-007-deterministic-behavioral-testing.md)
 - [Initial product requirements](prd/prd-initial.md)

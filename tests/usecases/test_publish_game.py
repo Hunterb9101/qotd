@@ -6,7 +6,7 @@ from qotd.usecases.handle_answer import apply_answer_instruction
 from qotd.usecases.publish_game import publish_automated_game, publish_manual_game
 from qotd.usecases.check_manual_question import check_manual_question
 from qotd.external.email.core import ParsedEmailMessage
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 def _question(game_day: date, correct_option: str = "A") -> Question:
@@ -25,7 +25,7 @@ def _answer_message() -> ParsedEmailMessage:
 
 
 def test_publish_game_manually_attaches_the_pending_answer() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     apply_answer_instruction(state=state, message=_answer_message(), processed_at=datetime(2026, 8, 9, tzinfo=UTC))
 
     game = publish_manual_game(
@@ -38,7 +38,7 @@ def test_publish_game_manually_attaches_the_pending_answer() -> None:
 
 
 def test_automated_publication_discards_a_pending_answer() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     apply_answer_instruction(state=state, message=_answer_message(), processed_at=datetime(2026, 8, 9, tzinfo=UTC))
 
     game = publish_automated_game(
@@ -53,7 +53,7 @@ def test_automated_publication_discards_a_pending_answer() -> None:
 def test_detected_manual_question_creates_a_publication_outbound_message() -> None:
     """A Gmail-detected Question has a durable publication record correlated to its Game."""
 
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = check_manual_question(
         game_date=game_day,

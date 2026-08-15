@@ -1,14 +1,16 @@
+"""Behavior of the source-backed in-memory canonical-state adapter."""
+
 from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
 
 from qotd.domain.canonical import GAME_PENDING, Game, ScoreEvent, ScoreboardEntry, Submission, new_id
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 def test_canonical_state_normalizes_players_and_derives_scoreboard_from_events() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(
         name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
     )
@@ -36,7 +38,7 @@ def test_canonical_state_normalizes_players_and_derives_scoreboard_from_events()
 
 
 def test_canonical_state_retains_late_and_superseded_submissions() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(
         name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
     )
@@ -67,7 +69,7 @@ def test_canonical_state_retains_late_and_superseded_submissions() -> None:
 
 
 def test_manual_score_event_adds_a_new_player_to_the_scoreboard() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(
         name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
     )
@@ -85,7 +87,7 @@ def test_manual_score_event_adds_a_new_player_to_the_scoreboard() -> None:
 
 
 def test_pending_answer_is_attached_when_the_manual_game_is_published() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(
         name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
     )
@@ -110,7 +112,7 @@ def test_pending_answer_is_attached_when_the_manual_game_is_published() -> None:
 
 
 def test_distinct_second_answer_is_rejected() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(
         name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
     )

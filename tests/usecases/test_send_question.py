@@ -7,7 +7,7 @@ import pytest
 
 from qotd.domain.models import Question
 from qotd.usecases.send_question import SendQuestionConfig, send_question
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 def test_production_send_requires_google_group_address() -> None:
@@ -18,7 +18,7 @@ def test_production_send_requires_google_group_address() -> None:
             SendQuestionConfig(
                 game_date=date(2026, 7, 9),
                 sender="sender@example.com",
-                state_store=InMemoryCanonicalState(),
+                state_store=InMemoryAdapter(),
                 gmail_user="sender@example.com",
                 oauth_client_id="",
                 oauth_client_secret="",
@@ -31,7 +31,7 @@ def test_production_send_requires_google_group_address() -> None:
 def test_canonical_send_publishes_a_game_without_snapshot_state() -> None:
     """Canonical publication requires no legacy monthly-score snapshots."""
 
-    store = InMemoryCanonicalState()
+    store = InMemoryAdapter()
     first_november_game = date(2026, 11, 2)
 
     monday_send = send_question(
@@ -78,7 +78,7 @@ def test_delivered_group_question_retains_reply_to_sender() -> None:
             oauth_client_id="client-id",
             oauth_client_secret="client-secret",
             oauth_refresh_token="refresh-token",
-            state_store=InMemoryCanonicalState(),
+            state_store=InMemoryAdapter(),
             google_group_email="qotd-group@googlegroups.com",
             question_generator=lambda game_date, _store: Question(
                 game_date=game_date.isoformat(), prompt="Question?",

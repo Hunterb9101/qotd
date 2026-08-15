@@ -20,11 +20,11 @@ from qotd.usecases.adjust_score import (
     record_manual_score_event,
 )
 from qotd.usecases.send_question import SendQuestionConfig, send_question
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 def test_transition_game_writes_events_and_marks_the_published_game_scored() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     player = state.create_or_find_player(email="ada@example.com")
@@ -52,7 +52,7 @@ def test_transition_game_writes_events_and_marks_the_published_game_scored() -> 
 
 
 def test_failed_scoring_transition_persists_neither_events_nor_scored_game() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game = Game(new_id(), series.id, date(2026, 8, 10), GAME_PENDING, "manual", now, now, now, correct_option="A")
@@ -73,7 +73,7 @@ def test_failed_scoring_transition_persists_neither_events_nor_scored_game() -> 
 
 
 def test_scoring_rejects_an_automatic_event_without_an_eligible_submission() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game = state.publish_game(
@@ -95,7 +95,7 @@ def test_scoring_rejects_an_automatic_event_without_an_eligible_submission() -> 
 
 
 def test_manual_score_event_for_a_new_player_appears_in_the_scoreboard() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     event = record_score_event(
@@ -115,7 +115,7 @@ def test_manual_score_event_for_a_new_player_appears_in_the_scoreboard() -> None
 
 
 def test_manual_score_event_uses_a_canonical_score_event() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     state.publish_game(
         Game(new_id(), state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)).id,
@@ -131,7 +131,7 @@ def test_manual_score_event_uses_a_canonical_score_event() -> None:
 
 
 def test_series_wide_manual_score_event_does_not_require_a_game() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     result = record_manual_score_event(
         ManualScoreEventConfig(email="new@example.com", points_delta=-2, reason="correction", state_store=state, series="0826")
@@ -143,7 +143,7 @@ def test_series_wide_manual_score_event_does_not_require_a_game() -> None:
 
 
 def test_malformed_manual_score_event_email_is_durably_rejected() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     result = process_manual_score_event_emails(
         ProcessManualScoreEventEmailsConfig(
             sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
@@ -161,7 +161,7 @@ def test_malformed_manual_score_event_email_is_durably_rejected() -> None:
 
 
 def test_manual_score_event_ignores_a_player_submission() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     sent: list[EmailMessage] = []
     handled: list[str] = []
     submission = ParsedEmailMessage(
@@ -185,7 +185,7 @@ def test_manual_score_event_ignores_a_player_submission() -> None:
 
 
 def test_manual_score_event_commits_instruction_event_and_outcome_before_delivery() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game_day = date(2026, 8, 10)
     state.publish_game(Game(new_id(), series.id, game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), correct_option="A"))
@@ -209,7 +209,7 @@ def test_manual_score_event_commits_instruction_event_and_outcome_before_deliver
 
 
 def test_duplicate_manual_score_event_reuses_its_committed_outcome_intent() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game_day = date(2026, 8, 10)
     state.publish_game(Game(new_id(), series.id, game_day, GAME_PENDING, "manual", datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), datetime(2026, 8, 11, tzinfo=UTC), correct_option="A"))
@@ -244,14 +244,14 @@ def test_scoring_reports_a_missing_game_with_a_dedicated_error() -> None:
                 oauth_client_id="client",
                 oauth_client_secret="secret",
                 oauth_refresh_token="token",
-                state_store=InMemoryCanonicalState(),
+                state_store=InMemoryAdapter(),
                 dry_run=True,
             )
         )
 
 
 def test_scoring_retains_late_and_superseded_submissions_but_events_link_only_selected_submission() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state,
@@ -285,7 +285,7 @@ def test_scoring_retains_late_and_superseded_submissions_but_events_link_only_se
 
 
 def test_out_of_order_submission_collection_keeps_the_latest_reply_eligible() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game = state.publish_game(
@@ -304,7 +304,7 @@ def test_out_of_order_submission_collection_keeps_the_latest_reply_eligible() ->
 
 
 def test_same_time_submissions_use_source_message_key_as_a_stable_tie_breaker() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 11, tzinfo=UTC)
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))
     game = state.publish_game(
@@ -320,7 +320,7 @@ def test_same_time_submissions_use_source_message_key_as_a_stable_tie_breaker() 
 
 
 def test_scoring_a_game_twice_does_not_duplicate_automatic_score_events() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state, game_day=game_day,
@@ -342,7 +342,7 @@ def test_scoring_a_game_twice_does_not_duplicate_automatic_score_events() -> Non
 
 
 def test_successful_scoring_commits_one_pending_organizer_update_intent() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state, game_day=game_day,
@@ -369,7 +369,7 @@ def test_successful_scoring_commits_one_pending_organizer_update_intent() -> Non
 
 
 def test_automated_publication_rolls_forward_only_a_scored_game() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     previous_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state, game_day=previous_day,
@@ -401,7 +401,7 @@ def test_automated_publication_rolls_forward_only_a_scored_game() -> None:
 
 
 def test_next_player_email_recaps_prior_game_point_earners_with_nicknames() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state, game_day=game_day,
@@ -446,7 +446,7 @@ def test_next_player_email_recaps_prior_game_point_earners_with_nicknames() -> N
 
 
 def test_automatic_scoring_preserves_an_existing_manual_score_event() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     game = publish_manual_game(
         state=state, game_day=game_day,
@@ -471,7 +471,7 @@ def test_automatic_scoring_preserves_an_existing_manual_score_event() -> None:
 
 
 def test_automated_publication_uses_canonical_state() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     result = send_question(
         SendQuestionConfig(
@@ -499,7 +499,7 @@ def test_automated_publication_uses_canonical_state() -> None:
     assert result.record.correct_option == "A"
 
 
-def _publication_config(state: InMemoryCanonicalState) -> SendQuestionConfig:
+def _publication_config(state: InMemoryAdapter) -> SendQuestionConfig:
     game_day = date(2026, 8, 10)
     return SendQuestionConfig(
         game_date=game_day, sender="organizer@example.com", gmail_user="organizer@example.com",
@@ -513,7 +513,7 @@ def _publication_config(state: InMemoryCanonicalState) -> SendQuestionConfig:
 
 
 def test_publication_send_failure_leaves_one_pending_intent() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     with pytest.raises(RuntimeError, match="send failed"):
         send_question(
@@ -527,7 +527,7 @@ def test_publication_send_failure_leaves_one_pending_intent() -> None:
 
 
 def test_pending_publication_reconciles_without_another_send() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     config = _publication_config(state)
     with pytest.raises(RuntimeError, match="send failed"):
         send_question(
@@ -555,7 +555,7 @@ def test_pending_publication_reconciles_without_another_send() -> None:
 
 
 def test_ambiguous_pending_publication_never_sends_a_duplicate() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     config = _publication_config(state)
     with pytest.raises(RuntimeError, match="send failed"):
         send_question(config, fetch_messages=lambda _query: [], send_message=lambda _message: (_ for _ in ()).throw(RuntimeError("send failed")))
@@ -578,7 +578,7 @@ def test_ambiguous_pending_publication_never_sends_a_duplicate() -> None:
 
 
 def test_successful_publication_commits_game_and_marks_its_intent_sent() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     send_question(_publication_config(state), fetch_messages=lambda _query: [], send_message=lambda _message: "sent-message")
 
@@ -591,7 +591,7 @@ def test_successful_publication_commits_game_and_marks_its_intent_sent() -> None
 
 
 def test_missing_answer_creates_one_organizer_intent_without_score_events() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     publish_manual_game(
         state=state,
@@ -620,7 +620,7 @@ def test_missing_answer_creates_one_organizer_intent_without_score_events() -> N
 
 
 def test_manual_question_publication_uses_the_pending_answer() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     game_day = date(2026, 8, 10)
     apply_answer_instruction(
         state=state,
@@ -651,7 +651,7 @@ def test_manual_question_publication_uses_the_pending_answer() -> None:
 
 
 def test_manual_scoring_succeeds_after_an_organizer_sets_the_missing_answer() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     now = datetime(2026, 8, 10, tzinfo=UTC)
     game_day = date(2026, 8, 10)
     game = publish_manual_game(

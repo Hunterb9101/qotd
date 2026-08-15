@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from qotd.external.email.core import ParsedEmailMessage
 from qotd.usecases.handle_answer import apply_answer_instruction
 from qotd.usecases.set_answer import ANSWER_INSTRUCTION_QUERY, ProcessSetAnswerEmailsConfig, process_set_answer_emails
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 def _message(body_text: str, message_id: str = "answer-1") -> ParsedEmailMessage:
@@ -19,7 +19,7 @@ def _message(body_text: str, message_id: str = "answer-1") -> ParsedEmailMessage
 
 def test_handle_answer_creates_pending_game_before_manual_publication() -> None:
     result = apply_answer_instruction(
-        state=InMemoryCanonicalState(),
+        state=InMemoryAdapter(),
         message=_message(
             "Action: set-answer\nDay: 2026-08-10\nCorrect option: B\nSource URL: https://example.com/source"
         ),
@@ -33,7 +33,7 @@ def test_handle_answer_creates_pending_game_before_manual_publication() -> None:
 
 
 def test_answer_instruction_commits_its_outcome_intent_with_the_game() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     result = apply_answer_instruction(
         state=state,
@@ -50,7 +50,7 @@ def test_answer_instruction_commits_its_outcome_intent_with_the_game() -> None:
 
 
 def test_rejected_answer_instruction_commits_its_outcome_intent() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     result = apply_answer_instruction(
         state=state,
@@ -65,7 +65,7 @@ def test_rejected_answer_instruction_commits_its_outcome_intent() -> None:
 
 
 def test_answer_instruction_records_a_conflicting_second_answer_as_rejected() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     apply_answer_instruction(
         state=state,
         message=_message(
@@ -90,7 +90,7 @@ def test_answer_instruction_records_a_conflicting_second_answer_as_rejected() ->
 
 
 def test_malformed_answer_instruction_is_durably_rejected() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     result = apply_answer_instruction(
         state=state,
@@ -106,7 +106,7 @@ def test_malformed_answer_instruction_is_durably_rejected() -> None:
 
 
 def test_answer_instruction_does_not_apply_the_rejection_template_source_url() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
 
     result = apply_answer_instruction(
         state=state,
@@ -123,7 +123,7 @@ def test_answer_instruction_does_not_apply_the_rejection_template_source_url() -
 
 
 def test_duplicate_answer_instruction_is_an_idempotent_skip() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     message = _message(
         "Action: set-answer\nDay: 2026-08-10\nCorrect option: A\nSource URL: https://example.com/source"
     )
@@ -137,7 +137,7 @@ def test_duplicate_answer_instruction_is_an_idempotent_skip() -> None:
 
 
 def test_answer_instruction_and_game_roll_back_together_on_storage_failure() -> None:
-    class FailingState(InMemoryCanonicalState):
+    class FailingState(InMemoryAdapter):
         def set_answer(self, game):  # type: ignore[no-untyped-def]
             raise RuntimeError("storage failure")
 
@@ -162,7 +162,7 @@ def test_answer_instruction_and_game_roll_back_together_on_storage_failure() -> 
 
 
 def test_legacy_answer_action_is_discovered_and_durably_rejected() -> None:
-    state = InMemoryCanonicalState()
+    state = InMemoryAdapter()
     queries: list[str] = []
 
     def fetch_messages(query: str) -> list[ParsedEmailMessage]:

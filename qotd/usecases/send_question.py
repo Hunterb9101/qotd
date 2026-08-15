@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from dataclasses import dataclass, field
+from datetime import date
 from email.message import EmailMessage
 from typing import Callable
 
 from qotd.domain.dates import question_subject
+from qotd.domain.clock import Clock, SystemClock
 from qotd.domain.generator import generate_placeholder_question
 from qotd.domain.canonical import Game, OUTBOUND_PENDING, OutboundMessage, new_id
 from qotd.domain.models import Question, StoredQuestion
@@ -43,6 +44,7 @@ class SendQuestionConfig:
     google_group_email: str = ""
     question_generator: QuestionGeneratorForDate | None = None
     dry_run: bool = False
+    clock: Clock = field(default_factory=SystemClock)
 
 
 @dataclass(frozen=True)
@@ -92,7 +94,7 @@ def send_question(
                 raise RuntimeError("Pending Question publication requires Gmail reconciliation before retry")
             deliver_outbound_message(
                 state=state, intent=existing_intent, sender=config.sender, fetch_messages=fetch_messages,
-                send_message=_gmail_sender(config), is_new=False,
+                send_message=_gmail_sender(config), is_new=False, clock=config.clock,
             )
         return _published_question_result(existing_game)
 
@@ -153,7 +155,7 @@ def send_question(
         standings=player_results.standings,
     )
 
-    published_at = datetime.now(UTC)
+    published_at = config.clock.now()
     existing_game = state.find_game(day=config.game_date)
     game_id = existing_game.id if existing_game is not None else new_id()
     outbound_message = OutboundMessage(
@@ -182,7 +184,7 @@ def send_question(
         assert fetch_messages is not None
         deliver_outbound_message(
             state=state, intent=outbound_message, sender=config.sender, fetch_messages=fetch_messages,
-            send_message=send_message or _gmail_sender(config), is_new=True,
+            send_message=send_message or _gmail_sender(config), is_new=True, clock=config.clock,
         )
     return SendQuestionResult(
         record=record,

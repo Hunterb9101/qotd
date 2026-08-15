@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from qotd.external.llm.openai import OpenAILLMClient, render_prompt
 from qotd.usecases.repair_question import RepairedQuestionOutput
-from tests.support import InMemoryCanonicalState
+from qotd.external.storage.memory import InMemoryAdapter
 
 
 class ExampleOutput(BaseModel):
@@ -55,7 +55,7 @@ class OpenAILLMClientTests(unittest.TestCase):
 
     def test_create_structured_response_uses_pydantic_schema(self) -> None:
         client = FakeOpenAIClient({"option": "A"})
-        state = InMemoryCanonicalState()
+        state = InMemoryAdapter()
         with tempfile.TemporaryDirectory() as temp_dir:
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Return JSON.", encoding="utf-8")
@@ -102,7 +102,7 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Return JSON.", encoding="utf-8")
 
-            OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
+            OpenAILLMClient(client=client, model="test-model", state=InMemoryAdapter()).create_structured_response(
                 prompt_path=prompt_path,
                 payload={},
                 response_model=RepairedQuestionOutput,
@@ -121,7 +121,7 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Research and return JSON.", encoding="utf-8")
 
-            OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
+            OpenAILLMClient(client=client, model="test-model", state=InMemoryAdapter()).create_structured_response(
                 prompt_path=prompt_path,
                 payload={},
                 response_model=ExampleOutput,
@@ -141,7 +141,7 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path.write_text("Return JSON.", encoding="utf-8")
 
             with self.assertRaises(ValidationError):
-                OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
+                OpenAILLMClient(client=client, model="test-model", state=InMemoryAdapter()).create_structured_response(
                     prompt_path=prompt_path,
                     payload={},
                     response_model=ExampleOutput,
@@ -152,7 +152,7 @@ class OpenAILLMClientTests(unittest.TestCase):
                 )
 
     def test_create_structured_response_records_provider_failure(self) -> None:
-        state = InMemoryCanonicalState()
+        state = InMemoryAdapter()
         client = FakeOpenAIClient(RuntimeError("provider unavailable"))
         with tempfile.TemporaryDirectory() as temp_dir:
             prompt_path = Path(temp_dir) / "prompt.md"

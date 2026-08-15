@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Literal
@@ -11,6 +11,7 @@ from typing import Callable, Literal
 from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.dates import MOUNTAIN_TIME, next_scoring_day, previous_game_day, question_subject
+from qotd.domain.clock import Clock, SystemClock
 from qotd.domain.models import ScoreboardLine, OPTION_LABELS, SubmissionCandidate, StoredQuestion
 from qotd.domain.canonical import (
     OUTBOUND_PENDING,
@@ -102,6 +103,7 @@ class ScoreResponsesConfig:
     answer_interpreter_factory: AnswerInterpreterFactory | None = None
     dry_run: bool = False
     usecase_run_id: str | None = None
+    clock: Clock = field(default_factory=SystemClock)
 
 
 @dataclass(frozen=True)
@@ -117,10 +119,10 @@ class ScoreResponsesResult:
     skipped_reason: str | None = None
 
 
-def today_mountain() -> date:
+def today_mountain(clock: Clock | None = None) -> date:
     """Return today's date in Mountain time."""
 
-    return datetime.now(MOUNTAIN_TIME).date()
+    return (clock or SystemClock()).now().astimezone(MOUNTAIN_TIME).date()
 
 
 def gmail_reply_query(*, game_date: date, scoring_date: date) -> str:
@@ -184,7 +186,8 @@ def collect_submissions(
 
 
 def collect_recent_submissions(
-    *, state: CanonicalState, fetch_messages: MessageFetcher, scoring_day: date, sender: str
+    *, state: CanonicalState, fetch_messages: MessageFetcher, scoring_day: date, sender: str,
+    collected_at: datetime,
 ) -> None:
     """Run the ADR-006 audit collection pass for the current and preceding Series."""
 
@@ -202,11 +205,12 @@ def collect_recent_submissions(
         replies = collect_reply_candidates(
             fetch_messages(gmail_reply_query(game_date=game.day, scoring_date=scoring_day)), question=question, sender=sender
         )
-        collect_submissions(state=state, game=game, replies=replies, collected_at=datetime.now(UTC))
+        collect_submissions(state=state, game=game, replies=replies, collected_at=collected_at)
 
 
 def collect_submissions_for_day(
-    *, state: CanonicalState, game_day: date, sender: str, fetch_messages: MessageFetcher
+    *, state: CanonicalState, game_day: date, sender: str, fetch_messages: MessageFetcher,
+    clock: Clock | None = None,
 ) -> tuple[Submission, ...]:
     """Collect a specified Day's Submissions for an audit without scoring its Game."""
 
@@ -214,10 +218,15 @@ def collect_submissions_for_day(
     if game is None:
         raise RuntimeError(f"No Game found for {game_day.isoformat()}")
     question = load_question_for_game_date(state, game_day)
+    current_time = (clock or SystemClock()).now()
     replies = collect_reply_candidates(
-        fetch_messages(gmail_reply_query(game_date=game_day, scoring_date=date.today())), question=question, sender=sender
+        fetch_messages(
+            gmail_reply_query(game_date=game_day, scoring_date=current_time.astimezone(MOUNTAIN_TIME).date())
+        ),
+        question=question,
+        sender=sender,
     )
-    return tuple(collect_submissions(state=state, game=game, replies=replies, collected_at=datetime.now(UTC)).values())
+    return tuple(collect_submissions(state=state, game=game, replies=replies, collected_at=current_time).values())
 
 
 def score_responses(
@@ -227,9 +236,10 @@ def score_responses(
 ) -> ScoreResponsesResult:
     """Collect, score, persist, and send the organizer scoring update."""
 
+    current_time = config.clock.now()
     usecase_run_id = config.usecase_run_id or new_id()
     if config.game_date is None:
-        scoring_date = config.scoring_date or today_mountain()
+        scoring_date = config.scoring_date or today_mountain(config.clock)
         game_date = previous_game_day(scoring_date)
     else:
         game_date = config.game_date
@@ -252,7 +262,8 @@ def score_responses(
                 query=gmail_query,
             )
     collect_recent_submissions(
-        state=config.state_store, fetch_messages=fetch_messages, scoring_day=scoring_date, sender=config.sender
+        state=config.state_store, fetch_messages=fetch_messages, scoring_day=scoring_date, sender=config.sender,
+        collected_at=current_time,
     )
     if not question.correct_option:
         body = (
@@ -278,7 +289,7 @@ def score_responses(
                     subject=f"QOTD scoring skipped - {game_date.isoformat()}",
                     body_text=body,
                     status=OUTBOUND_PENDING,
-                    created_at=datetime.now(UTC),
+                    created_at=current_time,
                     game_id=game.id,
                 )
         )
@@ -296,6 +307,7 @@ def score_responses(
                     oauth_client_secret=config.oauth_client_secret, oauth_refresh_token=config.oauth_refresh_token,
                 ),
                 is_new=existing_intent is None,
+                clock=config.clock,
             )
         return ScoreResponsesResult(
             question=question,
@@ -341,7 +353,7 @@ def score_responses(
     if game is None:
         raise RuntimeError(f"No Game found for {game_date.isoformat()}")
     submissions_by_message_key = collect_submissions(
-        state=config.state_store, game=game, replies=replies, collected_at=datetime.now(UTC)
+        state=config.state_store, game=game, replies=replies, collected_at=current_time
     )
     events: list[ScoreEvent] = []
     scored_event_emails: list[tuple[ScoreEvent, str]] = []
@@ -360,7 +372,7 @@ def score_responses(
             series_id=game.series_id,
             event_type=SCORE_EVENT_AUTOMATIC,
             points_delta=points,
-            created_at=datetime.now(UTC),
+            created_at=current_time,
             game_id=game.id,
             submission_id=submission.id,
         )
@@ -398,11 +410,11 @@ def score_responses(
         subject=f"QOTD scoring update - {game_date.isoformat()}",
         body_text=body,
         status=OUTBOUND_PENDING,
-        created_at=datetime.now(UTC),
+        created_at=current_time,
         game_id=game.id,
     )
     config.state_store.score_game(
-        replace(game, scored_at=datetime.now(UTC)),
+        replace(game, scored_at=current_time),
         score_events=tuple(events),
         outbound_messages=() if existing_intent is not None else (intent,),
     )
@@ -420,6 +432,7 @@ def score_responses(
                 oauth_client_secret=config.oauth_client_secret, oauth_refresh_token=config.oauth_refresh_token,
             ),
             is_new=existing_intent is None,
+            clock=config.clock,
         )
     return ScoreResponsesResult(
         question=question,
