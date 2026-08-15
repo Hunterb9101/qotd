@@ -431,6 +431,9 @@ def process_manual_score_event_emails(
     for message in fetch(config.query):
         normalized_sender = normalize_email_addresses([message.sender_email])
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
+        if sender_email not in approved_senders:
+            continue
+
         manual_score_event_result: ManualScoreEventResult | None = None
         error: str | None = None
         instruction = OrganizerInstruction(
@@ -444,26 +447,23 @@ def process_manual_score_event_emails(
             processed_at=datetime.now(UTC),
         )
 
-        if sender_email not in approved_senders:
-            error = f"sender is not approved: {sender_email}"
-        else:
-            try:
-                request = parse_manual_score_event_email(message.body_text)
-                event_config = ManualScoreEventConfig(
-                        email=request.player_email,
-                        points_delta=request.points_delta,
-                        reason=request.reason,
-                        state_store=config.state_store,
-                        game_date=request.game_date,
-                        series=request.series,
-                        source_gmail_message_id=message.message_id,
-                        idempotency_key=request.idempotency_key,
-                        organizer_instruction=instruction,
-                        dry_run=config.dry_run,
-                    )
-                player, event, manual_score_event_result = _prepare_manual_score_event(event_config)
-            except ValueError as exc:
-                error = str(exc)
+        try:
+            request = parse_manual_score_event_email(message.body_text)
+            event_config = ManualScoreEventConfig(
+                    email=request.player_email,
+                    points_delta=request.points_delta,
+                    reason=request.reason,
+                    state_store=config.state_store,
+                    game_date=request.game_date,
+                    series=request.series,
+                    source_gmail_message_id=message.message_id,
+                    idempotency_key=request.idempotency_key,
+                    organizer_instruction=instruction,
+                    dry_run=config.dry_run,
+                )
+            player, event, manual_score_event_result = _prepare_manual_score_event(event_config)
+        except ValueError as exc:
+            error = str(exc)
 
         response_body = build_manual_score_event_response_body(
             request_message=message,

@@ -24,10 +24,20 @@ def load_player_results(state_store: CanonicalState, game_date: date) -> PlayerR
     if game is None:
         return PlayerResults(point_earners=(), standings=())
     scoreboard = state_store.read_scoreboard(series_id=game.series_id)
+    player_names = {entry.player_id: entry.nickname or entry.email for entry in scoreboard}
+    point_earner_ids = {
+        event.player_id
+        for event in state_store.read_score_events_for_game(game_id=game.id)
+        if event.points_delta > 0
+    }
     return PlayerResults(
-        point_earners=(),
+        point_earners=tuple(
+            player_names[entry.player_id] for entry in scoreboard if entry.player_id in point_earner_ids
+        ),
         standings=tuple(
-            ScoreboardLine(series=game.day.strftime("%m%y"), email=entry.email, points=entry.score)
+            ScoreboardLine(
+                series=game.day.strftime("%m%y"), email=entry.email, points=entry.score, nickname=entry.nickname
+            )
             for entry in scoreboard
         ),
     )

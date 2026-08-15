@@ -102,6 +102,7 @@ class ScoreboardLine:
     series: str
     email: str
     points: int
+    nickname: str | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
