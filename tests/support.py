@@ -363,6 +363,9 @@ class InMemoryCanonicalState(CanonicalState):
         self.outbound_messages[reconciled.id] = reconciled
         return reconciled
 
+    def read_score_events_for_game(self, *, game_id: str) -> tuple[ScoreEvent, ...]:
+        return tuple(event for event in self.score_events.values() if event.game_id == game_id)
+
     def read_scoreboard(self, *, series_id: str) -> tuple[ScoreboardEntry, ...]:
         active_player_ids = {
             submission.player_id
@@ -374,6 +377,8 @@ class InMemoryCanonicalState(CanonicalState):
             if event.series_id == series_id:
                 scores[event.player_id] = scores.get(event.player_id, 0) + event.points_delta
         return tuple(
-            ScoreboardEntry(series_id, player_id, self.players[player_id].email, score)
+            ScoreboardEntry(
+                series_id, player_id, self.players[player_id].email, score, self.players[player_id].nickname
+            )
             for player_id, score in sorted(scores.items(), key=lambda item: (-item[1], self.players[item[0]].email))
         )

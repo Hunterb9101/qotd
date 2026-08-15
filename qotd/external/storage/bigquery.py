@@ -715,6 +715,13 @@ class BQAdapter(CanonicalState):
             raise RuntimeError("Outbound Message disappeared during reconciliation")
         return reconciled
 
+    def read_score_events_for_game(self, *, game_id: str) -> tuple[ScoreEvent, ...]:
+        rows = self.query_rows(
+            f"SELECT * FROM `{self.table('score_events')}` WHERE game_id = @game_id",
+            self._parameters({"game_id": game_id}),
+        )
+        return tuple(ScoreEvent(**row) for row in rows)
+
     def read_scoreboard(self, *, series_id: str) -> tuple[ScoreboardEntry, ...]:
         rows = self.query_rows(
             f"""
@@ -729,6 +736,7 @@ class BQAdapter(CanonicalState):
               scoreboard_players.series_id,
               players.id AS player_id,
               players.email,
+              players.nickname,
               COALESCE(SUM(score_events.points_delta), 0) AS score
             FROM scoreboard_players
             JOIN `{self.table('players')}` AS players ON players.id = scoreboard_players.player_id
@@ -736,7 +744,7 @@ class BQAdapter(CanonicalState):
               ON score_events.player_id = players.id
               AND score_events.series_id = scoreboard_players.series_id
             WHERE scoreboard_players.series_id = @series_id
-            GROUP BY scoreboard_players.series_id, players.id, players.email
+            GROUP BY scoreboard_players.series_id, players.id, players.email, players.nickname
             ORDER BY score DESC, players.email
             """,
             self._parameters({"series_id": series_id}),

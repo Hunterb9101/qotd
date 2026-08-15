@@ -144,3 +144,4 @@ class ScoreboardEntry:
     player_id: str
     email: str
     score: int
+    nickname: str | None = None

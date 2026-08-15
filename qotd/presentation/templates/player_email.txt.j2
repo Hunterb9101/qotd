@@ -4,8 +4,8 @@
 The Answer on {{ previous_question.game_date }} is {{ previous_question.correct_option }}. {{ previous_question.options[previous_question.correct_option] }}
 
 Points earned:
-{% for email in point_earners -%}
-- {{ email }}
+{% for player in point_earners -%}
+- {{ player }}
 {% else -%}
 - None
 {% endfor %}
@@ -13,14 +13,14 @@ Points earned:
 {% if is_month_end_recap -%}
 Final Scoreboard for {{ previous_question.game_date[:7] }}:
 {% for score in standings -%}
-{{ loop.index }}. {{ score.email }} — {{ score.points }}
+{{ loop.index }}. {{ score.nickname or score.email }} — {{ score.points }}
 {% else -%}
 - None
 {% endfor %}
 
 Winners:
 {% for winner in monthly_winners -%}
-- {{ winner.email }} with {{ winner.points }} points
+- {{ winner.nickname or winner.email }} with {{ winner.points }} points
 {% else -%}
 - No scored Players in this Series
 {% endfor %}
@@ -29,7 +29,7 @@ A new Series starts today with a zeroed Scoreboard.
 {% else -%}
 Current Scoreboard:
 {% for score in standings -%}
-{{ loop.index }}. {{ score.email }} — {{ score.points }}
+{{ loop.index }}. {{ score.nickname or score.email }} — {{ score.points }}
 {% else -%}
 - None
 {% endfor %}
