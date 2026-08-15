@@ -31,6 +31,19 @@ Question of the Day, the daily multiple-choice trivia game.
 The calendar day in the `America/Denver` timezone. A Day identifies the date
 of a [**Game**](#game) and governs its scheduled workflow times.
 
+#### AI Call
+
+An append-only durable record of one request sent to an AI provider and its
+result. An AI Call records its [**Use Case Run**](#use-case-run), prompt,
+provider request and response (without credentials), provider and model,
+status or error, and available timing and usage metadata.
+
+#### Use Case Run
+
+One execution of a top-level workflow, identified by a run identifier shared
+only by the [**AI Calls**](#ai-call) caused by that execution. It is not a
+cross-workflow or lifecycle-wide trace identifier.
+
 ### Roles
 
 #### Player

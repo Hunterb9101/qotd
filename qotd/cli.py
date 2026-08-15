@@ -153,6 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--openai-generator-model",
         default=os.environ.get("OPENAI_GENERATOR_MODEL", DEFAULT_OPENAI_GENERATOR_MODEL),
     )
+    add_google_options(samples_parser)
     score_parser = subparsers.add_parser("score-responses", help="Collect and score QOTD replies")
     score_parser.add_argument("--scoring-date", type=parse_date, default=None)
     score_parser.add_argument("--game-date", type=parse_date, default=None)
@@ -237,6 +238,7 @@ def main() -> None:
             llm_client = build_openai_llm_client(
                 api_key=args.openai_api_key,
                 model=args.openai_generator_model,
+                state=state_store,
             )
             llm_generator = LLMQuestionGenerator(
                 llm_client=llm_client,
@@ -245,6 +247,7 @@ def main() -> None:
             topic_discovery_client = build_openai_llm_client(
                 api_key=args.openai_api_key,
                 model=args.openai_web_search_model,
+                state=state_store,
             )
             return generate_researched_question(
                 GenerateResearchedQuestionConfig(game_date=game_date),
@@ -279,9 +282,18 @@ def main() -> None:
     elif args.command == "generate-samples":
         if not args.openai_api_key:
             parser.error("generate-samples requires OPENAI_API_KEY or --openai-api-key")
+        require_google_options(args)
+        state_store = build_bigquery_state_store(
+            project_id=args.google_cloud_project,
+            dataset=args.bigquery_dataset,
+            oauth_client_id=args.oauth_client_id,
+            oauth_client_secret=args.oauth_client_secret,
+            oauth_refresh_token=args.oauth_refresh_token,
+        )
         llm_client = build_openai_llm_client(
             api_key=args.openai_api_key,
             model=args.openai_generator_model,
+            state=state_store,
         )
         candidates = generate_question_samples(
             GenerateQuestionSamplesConfig(
@@ -345,6 +357,7 @@ def main() -> None:
                         llm_client=build_openai_llm_client(
                             api_key=args.openai_api_key,
                             model=args.openai_interpreter_model,
+                            state=state_store,
                         ),
                         question=question,
                     ),

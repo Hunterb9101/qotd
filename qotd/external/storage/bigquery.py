@@ -10,6 +10,7 @@ from typing import Any
 
 from qotd.external.auth.gcp import build_oauth_credentials
 from qotd.domain.canonical import (
+    AICall,
     Game,
     INSTRUCTION_DUPLICATE,
     OrganizerInstruction,
@@ -185,6 +186,24 @@ class BQAdapter(CanonicalState):
             raise RuntimeError("Player creation committed without a readable Player row")
         row = rows[0]
         return Player(id=str(row["id"]), email=str(row["email"]), nickname=row.get("nickname"))
+
+    def record_ai_call(self, ai_call: AICall) -> AICall:
+        """Persist one immutable AI Call record."""
+
+        values = asdict(ai_call)
+        fields = tuple(values)
+        value_expressions = ", ".join(
+            f"PARSE_JSON(@{field})" if field in {"request", "response"} else f"@{field}"
+            for field in fields
+        )
+        self.transaction_rows(
+            f"""
+            INSERT INTO `{self.table('ai_calls')}` ({', '.join(fields)})
+            VALUES ({value_expressions});
+            """,
+            self._parameters(values),
+        )
+        return ai_call
 
     def create_or_find_series(self, *, name: str, starts_on: Any, ends_on: Any) -> Series:
         """Create or look up a Series by name."""

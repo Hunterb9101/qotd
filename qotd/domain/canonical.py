@@ -139,6 +139,30 @@ class OutboundMessage:
 
 
 @dataclass(frozen=True)
+class AICall:
+    """An append-only record of one provider invocation caused by a Use Case Run."""
+
+    id: str
+    use_case: str
+    prompt: str
+    usecase_run_id: str
+    provider: str
+    model: str
+    request: dict[str, object]
+    status: str
+    started_at: datetime
+    completed_at: datetime
+    response: dict[str, object] | None = None
+    provider_request_id: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
+    latency_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+
+
+@dataclass(frozen=True)
 class ScoreboardEntry:
     series_id: str
     player_id: str

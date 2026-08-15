@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from qotd.external.llm.openai import OpenAILLMClient, render_prompt
 from qotd.usecases.repair_question import RepairedQuestionOutput
+from tests.support import InMemoryCanonicalState
 
 
 class ExampleOutput(BaseModel):
@@ -20,17 +21,19 @@ class ExampleOutput(BaseModel):
 
 
 class FakeResponses:
-    def __init__(self, output: dict[str, Any]) -> None:
+    def __init__(self, output: dict[str, Any] | Exception) -> None:
         self.output = output
         self.calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> SimpleNamespace:
         self.calls.append(kwargs)
+        if isinstance(self.output, Exception):
+            raise self.output
         return SimpleNamespace(output_text=json.dumps(self.output))
 
 
 class FakeOpenAIClient:
-    def __init__(self, output: dict[str, Any]) -> None:
+    def __init__(self, output: dict[str, Any] | Exception) -> None:
         self.responses = FakeResponses(output)
 
 
@@ -52,16 +55,19 @@ class OpenAILLMClientTests(unittest.TestCase):
 
     def test_create_structured_response_uses_pydantic_schema(self) -> None:
         client = FakeOpenAIClient({"option": "A"})
+        state = InMemoryCanonicalState()
         with tempfile.TemporaryDirectory() as temp_dir:
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Return JSON.", encoding="utf-8")
 
-            result = OpenAILLMClient(client=client, model="test-model").create_structured_response(
+            result = OpenAILLMClient(client=client, model="test-model", state=state).create_structured_response(
                 prompt_path=prompt_path,
                 payload={"reply": "A"},
                 response_model=ExampleOutput,
                 schema_name="example_output",
                 max_output_tokens=50,
+                use_case="score_responses",
+                usecase_run_id="score-run",
             )
 
         self.assertEqual(result.option, "A")
@@ -72,6 +78,16 @@ class OpenAILLMClientTests(unittest.TestCase):
         text_config = cast(dict[str, Any], call["text"])
         self.assertEqual(text_config["format"]["name"], "example_output")
         self.assertIn("option", text_config["format"]["schema"]["properties"])
+        ai_call = next(iter(state.ai_calls.values()))
+        self.assertEqual(ai_call.use_case, "score_responses")
+        self.assertEqual(ai_call.prompt, "prompt")
+        self.assertEqual(ai_call.usecase_run_id, "score-run")
+        self.assertEqual(ai_call.request, call)
+        self.assertEqual(ai_call.response, {"output_text": '{"option": "A"}'})
+        self.assertEqual(ai_call.status, "succeeded")
+        self.assertEqual(ai_call.provider, "openai")
+        self.assertEqual(ai_call.model, "test-model")
+        self.assertIsNotNone(ai_call.latency_ms)
 
     def test_repaired_question_schema_avoids_unsupported_property_names(self) -> None:
         client = FakeOpenAIClient(
@@ -86,12 +102,14 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Return JSON.", encoding="utf-8")
 
-            OpenAILLMClient(client=client, model="test-model").create_structured_response(
+            OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
                 prompt_path=prompt_path,
                 payload={},
                 response_model=RepairedQuestionOutput,
                 schema_name="qotd_repaired_question",
                 max_output_tokens=50,
+                use_case="publish_question",
+                usecase_run_id="publish-run",
             )
 
         schema = client.responses.calls[0]["text"]["format"]["schema"]
@@ -103,13 +121,15 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path = Path(temp_dir) / "prompt.md"
             prompt_path.write_text("Research and return JSON.", encoding="utf-8")
 
-            OpenAILLMClient(client=client, model="test-model").create_structured_response(
+            OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
                 prompt_path=prompt_path,
                 payload={},
                 response_model=ExampleOutput,
                 schema_name="example_output",
                 max_output_tokens=50,
                 tools=({"type": "web_search"},),
+                use_case="publish_question",
+                usecase_run_id="publish-run",
             )
 
         self.assertEqual(client.responses.calls[0]["tools"], [{"type": "web_search"}])
@@ -121,13 +141,39 @@ class OpenAILLMClientTests(unittest.TestCase):
             prompt_path.write_text("Return JSON.", encoding="utf-8")
 
             with self.assertRaises(ValidationError):
-                OpenAILLMClient(client=client, model="test-model").create_structured_response(
+                OpenAILLMClient(client=client, model="test-model", state=InMemoryCanonicalState()).create_structured_response(
                     prompt_path=prompt_path,
                     payload={},
                     response_model=ExampleOutput,
                     schema_name="example_output",
                     max_output_tokens=50,
+                    use_case="publish_question",
+                    usecase_run_id="publish-run",
                 )
+
+    def test_create_structured_response_records_provider_failure(self) -> None:
+        state = InMemoryCanonicalState()
+        client = FakeOpenAIClient(RuntimeError("provider unavailable"))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "prompt.md"
+            prompt_path.write_text("Return JSON.", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+                OpenAILLMClient(client=client, model="test-model", state=state).create_structured_response(
+                    prompt_path=prompt_path,
+                    payload={},
+                    response_model=ExampleOutput,
+                    schema_name="example_output",
+                    max_output_tokens=50,
+                    use_case="score_responses",
+                    usecase_run_id="failed-score-run",
+                )
+
+        ai_call = next(iter(state.ai_calls.values()))
+        self.assertEqual(ai_call.status, "failed")
+        self.assertEqual(ai_call.error_type, "RuntimeError")
+        self.assertEqual(ai_call.error_message, "provider unavailable")
+        self.assertIsNone(ai_call.response)
 
 
 if __name__ == "__main__":

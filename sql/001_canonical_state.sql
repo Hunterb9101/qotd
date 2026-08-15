@@ -16,6 +16,27 @@ CREATE TABLE IF NOT EXISTS players (
   nickname STRING
 );
 
+CREATE TABLE IF NOT EXISTS ai_calls (
+  id STRING NOT NULL,
+  use_case STRING NOT NULL,
+  prompt STRING NOT NULL,
+  usecase_run_id STRING NOT NULL,
+  provider STRING NOT NULL,
+  model STRING NOT NULL,
+  request JSON NOT NULL,
+  response JSON,
+  provider_request_id STRING,
+  status STRING NOT NULL,
+  error_type STRING,
+  error_message STRING,
+  started_at TIMESTAMP NOT NULL,
+  completed_at TIMESTAMP NOT NULL,
+  latency_ms INT64,
+  input_tokens INT64,
+  output_tokens INT64,
+  total_tokens INT64
+);
+
 CREATE TABLE IF NOT EXISTS games (
   id STRING NOT NULL,
   series_id STRING NOT NULL,

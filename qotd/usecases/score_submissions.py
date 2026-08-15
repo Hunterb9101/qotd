@@ -61,6 +61,7 @@ class LLMAnswerInterpreter:
     question: StoredQuestion
     prompt_path: Path = DEFAULT_INTERPRET_ANSWER_PROMPT_PATH
     max_output_tokens: int = 200
+    usecase_run_id: str = ""
 
     def __call__(self, body_text: str) -> AnswerInterpretation:
         """Interpret one Player Submission as A/B/C/D/UNKNOWN."""
@@ -78,6 +79,8 @@ class LLMAnswerInterpreter:
             response_model=AnswerInterpretationOutput,
             schema_name="qotd_answer_interpretation",
             max_output_tokens=self.max_output_tokens,
+            use_case="score_responses",
+            usecase_run_id=self.usecase_run_id or new_id(),
         )
         needs_review = data.needs_review or data.option == "UNKNOWN"
         return AnswerInterpretation(option=data.option, needs_review=needs_review)
@@ -98,6 +101,7 @@ class ScoreResponsesConfig:
     game_date: date | None = None
     answer_interpreter_factory: AnswerInterpreterFactory | None = None
     dry_run: bool = False
+    usecase_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +227,7 @@ def score_responses(
 ) -> ScoreResponsesResult:
     """Collect, score, persist, and send the organizer scoring update."""
 
+    usecase_run_id = config.usecase_run_id or new_id()
     if config.game_date is None:
         scoring_date = config.scoring_date or today_mountain()
         game_date = previous_game_day(scoring_date)
@@ -322,6 +327,8 @@ def score_responses(
     interpret_answer = None
     if config.answer_interpreter_factory is not None:
         ai_interpret_answer = config.answer_interpreter_factory(question)
+        if isinstance(ai_interpret_answer, LLMAnswerInterpreter):
+            ai_interpret_answer = replace(ai_interpret_answer, usecase_run_id=usecase_run_id)
 
         def interpret_answer(body_text: str) -> AnswerInterpretation:
             deterministic = parse_deterministic_answer(body_text)

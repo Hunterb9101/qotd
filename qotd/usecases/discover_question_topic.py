@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 
 from qotd.domain.models import QuestionTopic
 from qotd.external.llm.core import LLMClient
+from qotd.domain.canonical import new_id
 from qotd.external.web_search.core import (
     WebSearchClient,
     WebSearchResult,
@@ -56,6 +57,7 @@ class LLMTopicDiscoverer:
     llm_client: LLMClient
     prompt_path: Path = DEFAULT_TOPIC_DISCOVERY_PROMPT_PATH
     max_output_tokens: int = 12000
+    usecase_run_id: str = ""
 
     def search(self, query: str, *, limit: int = 5) -> tuple[WebSearchResult, ...]:
         """Return prompt-planned topic directions through the web-search boundary."""
@@ -69,6 +71,8 @@ class LLMTopicDiscoverer:
             schema_name="qotd_topic_discovery",
             max_output_tokens=self.max_output_tokens,
             tools=({"type": "web_search"},),
+            use_case="publish_question",
+            usecase_run_id=self.usecase_run_id or new_id(),
         )
         return tuple(
             WebSearchResult(title=topic.title, url="", snippet=topic.summary)
