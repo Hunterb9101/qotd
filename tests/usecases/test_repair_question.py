@@ -24,6 +24,17 @@ def _api_key() -> str:
     return api_key
 
 
+def _repair(candidate: GeneratedQuestionCandidate) -> GeneratedQuestionCandidate:
+    repair = RepairGeneratedQuestion(
+        llm_client=build_openai_llm_client(
+            api_key=_api_key(),
+            model=os.environ.get("OPENAI_GENERATOR_MODEL", "gpt-5.4-mini"),
+            state=InMemoryAdapter(),
+        )
+    )
+    return repair(candidate, ("question prompt leaks the correct answer",))
+
+
 @pytest.mark.intg
 def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
     """The repair model must correct the answer leak seen in workflow run #59."""
@@ -47,17 +58,48 @@ def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
         source_urls=("https://www.amazon.com/gp/help/customer/display.html?nodeId=GKLXVX2X7B8P6Q5C",),
         source_evidence=("Echo wake words include Alexa, Amazon, Computer, Echo, and Ziggy.",),
     )
-    repair = RepairGeneratedQuestion(
-        llm_client=build_openai_llm_client(
-            api_key=_api_key(),
-            model=os.environ.get("OPENAI_GENERATOR_MODEL", "gpt-5.4-mini"),
-            state=InMemoryAdapter(),
-        )
-    )
-
-    repaired = repair(candidate, ("question prompt leaks the correct answer",))
+    repaired = _repair(candidate)
 
     assert repaired.question.prompt != candidate.question.prompt
     assert "ziggy" not in repaired.question.prompt.casefold()
     assert "echo" in repaired.question.prompt.casefold()
+    validate_self_researched_candidate(repaired)
+
+
+@pytest.mark.intg
+def test_repair_question_removes_city_answer_leak_from_player_prompt() -> None:
+    """The repair model removes an answer leaked by descriptive setup wording."""
+
+    candidate = GeneratedQuestionCandidate(
+        question=Question(
+            game_date=date(2026, 7, 10).isoformat(),
+            prompt=(
+                "Here's a weirdly St. Louis dessert crossover for you: gooey butter cake is one "
+                "of those happy accidents people can't stop talking about. What city is it tied to?"
+            ),
+            options={
+                "A": "Savannah, Georgia",
+                "B": "Providence, Rhode Island",
+                "C": "St. Louis, Missouri",
+                "D": "Portland, Oregon",
+            },
+            correct_option="C",
+            source_note="Gooey butter cake originated in St. Louis, Missouri.",
+            source_url="https://www.explorestlouis.com/food-drink/gooey-butter-cake/",
+        ),
+        topic_source=QuestionTopic(
+            title="Gooey butter cake",
+            summary="A dessert associated with a baking accident.",
+            source_url="https://www.explorestlouis.com/food-drink/gooey-butter-cake/",
+        ),
+        category="Food & Drink",
+        topic="Gooey butter cake",
+        source_urls=("https://www.explorestlouis.com/food-drink/gooey-butter-cake/",),
+        source_evidence=("Gooey butter cake originated in St. Louis, Missouri.",),
+    )
+
+    repaired = _repair(candidate)
+
+    assert repaired.question.prompt != candidate.question.prompt
+    assert "st. louis" not in repaired.question.prompt.casefold()
     validate_self_researched_candidate(repaired)
