@@ -40,7 +40,7 @@ from qotd.usecases.generate_question import (
 
 
 DEFAULT_BIGQUERY_DATASET = "qotd"
-DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-4.1-mini"
+DEFAULT_OPENAI_INTERPRETER_MODEL = "gpt-5.4"
 DEFAULT_OPENAI_GENERATOR_MODEL = "gpt-5.4-mini"
 DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5.4-mini"
 

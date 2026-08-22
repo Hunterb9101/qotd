@@ -15,6 +15,9 @@ from qotd.domain.canonical import new_id
 
 
 DEFAULT_REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "repair_generated_question.md"
+DEFAULT_ANSWER_LEAK_REPAIR_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "prompts" / "repair_answer_leaking_prompt.md"
+)
 
 
 class RepairedQuestionOptions(BaseModel):
@@ -37,6 +40,14 @@ class RepairedQuestionOutput(BaseModel):
     options: RepairedQuestionOptions
     correct_option: Literal["A", "B", "C", "D"]
     source_note: str
+
+
+class RepairedPromptOutput(BaseModel):
+    """Player-facing prompt returned by an answer-leak repair call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str
 
 
 class QuestionRepairer(Protocol):
@@ -69,6 +80,49 @@ class RepairGeneratedQuestion:
         """Return a minimally revised candidate that addresses the supplied issues."""
 
         question = candidate.question
+        if "question prompt leaks the correct answer" in issues:
+            repaired = self.llm_client.create_structured_response(
+                prompt_path=DEFAULT_ANSWER_LEAK_REPAIR_PROMPT_PATH,
+                payload={
+                    "category": candidate.category,
+                    "topic": candidate.topic,
+                    "question": {
+                        "prompt": question.prompt,
+                        "options": question.options,
+                        "correct_option": question.correct_option,
+                        "correct_answer": question.options[question.correct_option],
+                    },
+                    "sources": [
+                        {"url": url, "evidence": evidence}
+                        for url, evidence in zip(
+                            candidate.source_urls,
+                            candidate.source_evidence,
+                            strict=True,
+                        )
+                    ],
+                },
+                response_model=RepairedPromptOutput,
+                schema_name="qotd_repaired_prompt",
+                max_output_tokens=self.max_output_tokens,
+                use_case="publish_question",
+                usecase_run_id=self.usecase_run_id or new_id(),
+            )
+            return GeneratedQuestionCandidate(
+                question=Question(
+                    game_date=question.game_date,
+                    prompt=repaired.prompt,
+                    options=question.options,
+                    correct_option=question.correct_option,
+                    source_note=question.source_note,
+                    source_url=question.source_url,
+                ),
+                topic_source=candidate.topic_source,
+                category=candidate.category,
+                topic=candidate.topic,
+                source_urls=candidate.source_urls,
+                source_evidence=candidate.source_evidence,
+            )
+
         data = self.llm_client.create_structured_response(
             prompt_path=self.prompt_path,
             payload={

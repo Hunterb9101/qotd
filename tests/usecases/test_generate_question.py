@@ -263,6 +263,49 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
         self.assertEqual(repair_calls[0][0], generated_candidates[0])
         self.assertEqual(repair_calls[0][1], ("The wording gives away Wisconsin.",))
 
+    def test_whole_flow_regenerates_when_repair_leaves_answer_leakage_unchanged(self) -> None:
+        search = FakeWebSearchClient([(evidence(),), (evidence(),)])
+        generated_candidates: list[GeneratedQuestionCandidate] = []
+        repair_calls: list[tuple[GeneratedQuestionCandidate, tuple[str, ...]]] = []
+
+        def generate(topic, category, game_date, results, reasons):
+            candidate = candidate_for(topic, category, game_date)
+            if not generated_candidates:
+                candidate = GeneratedQuestionCandidate(
+                    question=Question(
+                        game_date=candidate.question.game_date,
+                        prompt="Why is Wisconsin the biggest cheese producer?",
+                        options=candidate.question.options,
+                        correct_option=candidate.question.correct_option,
+                        source_note=candidate.question.source_note,
+                        source_url=candidate.question.source_url,
+                    ),
+                    topic_source=candidate.topic_source,
+                    category=candidate.category,
+                    topic=candidate.topic,
+                    source_urls=candidate.source_urls,
+                    source_evidence=candidate.source_evidence,
+                )
+            generated_candidates.append(candidate)
+            return candidate
+
+        def repair(candidate, issues):
+            repair_calls.append((candidate, issues))
+            return candidate
+
+        result = generate_researched_question(
+            GenerateResearchedQuestionConfig(date(2026, 7, 10), categories=("Food",), attempts=3),
+            search_client=search,
+            generate_question=generate,
+            repair_question=repair,
+        )
+
+        self.assertEqual(result.attempts_used, 3)
+        self.assertEqual(len(generated_candidates), 2)
+        self.assertEqual(len(repair_calls), 1)
+        self.assertEqual(repair_calls[0][1], ("question prompt leaks the correct answer",))
+        self.assertIn("repair returned a candidate with unchanged issues", result.rejection_reasons[1])
+
     def test_exhaustion_alerts_and_fails_closed(self) -> None:
         search = FakeWebSearchClient([()])
         alerts: list[str] = []
