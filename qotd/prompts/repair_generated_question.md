@@ -4,17 +4,6 @@ Revise the candidate only enough to correct the listed issues. Most of the quest
 useful, so preserve its category, topic, underlying fact, source evidence, difficulty, and any
 wording or answer choices that do not contribute to a reported problem.
 
-{% if "question prompt leaks the correct answer" in issues -%}
-## Mandatory answer-leak rewrite
-
-The correct answer and source details are redacted below. Completely rewrite the Player-facing
-prompt before returning it. The returned prompt must not contain the correct answer or either
-redaction marker. Do not preserve or lightly edit the original prompt; changing options or the
-source note alone does not repair this issue. This requirement overrides the instruction to
-preserve existing wording.
-
-{% endif -%}
-
 ## Candidate
 
 - Category: {{ category }}
