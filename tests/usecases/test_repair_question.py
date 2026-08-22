@@ -31,21 +31,21 @@ def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
     candidate = GeneratedQuestionCandidate(
         question=Question(
             game_date=date(2026, 7, 10).isoformat(),
-            prompt="Amazon actually lets you swap the wake word on an Echo. Which wake word is on the available list?",
-            options={"A": "Siri", "B": "Amazon", "C": "Cortana", "D": "Bixby"},
+            prompt="Ziggy is one of the wake words available on an Amazon Echo. Which wake word can you choose?",
+            options={"A": "Siri", "B": "Ziggy", "C": "Cortana", "D": "Bixby"},
             correct_option="B",
-            source_note="Amazon documents the available Alexa wake words.",
+            source_note="Amazon documents the available Echo wake words.",
             source_url="https://www.amazon.com/gp/help/customer/display.html?nodeId=GKLXVX2X7B8P6Q5C",
         ),
         topic_source=QuestionTopic(
-            title="Alexa wake words",
+            title="Echo wake words",
             summary="Amazon documents alternate wake words for Echo devices.",
             source_url="https://www.amazon.com/gp/help/customer/display.html?nodeId=GKLXVX2X7B8P6Q5C",
         ),
         category="Technology",
-        topic="Alexa wake words",
+        topic="Echo wake words",
         source_urls=("https://www.amazon.com/gp/help/customer/display.html?nodeId=GKLXVX2X7B8P6Q5C",),
-        source_evidence=("Amazon is available as an Alexa wake word.",),
+        source_evidence=("Echo wake words include Alexa, Amazon, Computer, Echo, and Ziggy.",),
     )
     repair = RepairGeneratedQuestion(
         llm_client=build_openai_llm_client(
@@ -58,5 +58,6 @@ def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
     repaired = repair(candidate, ("question prompt leaks the correct answer",))
 
     assert repaired.question.prompt != candidate.question.prompt
-    assert "amazon" not in repaired.question.prompt.casefold()
+    assert "ziggy" not in repaired.question.prompt.casefold()
+    assert "echo" in repaired.question.prompt.casefold()
     validate_self_researched_candidate(repaired)

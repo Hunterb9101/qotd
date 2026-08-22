@@ -27,12 +27,13 @@ avoid it; players will not see the answer, options, or source material.
 
 - Ask about the same underlying fact.
 - The following text is forbidden in the Player-facing prompt: `{{ question.correct_answer }}`.
-- Keep the prompt answer-neutral: do not name the correct answer or use a brand, product, person,
-  place, title, or other identifier that refers or alludes to it.
+- Keep the prompt answer-neutral: do not name, describe, allude to, or otherwise refer to the
+  correct answer.
+- Retain necessary product or subject context when it does not itself identify the correct answer.
 - Do not mention the source, its publisher, or its URL in the Player-facing prompt.
 - Do not reuse the failed Player-facing prompt.
 - Before returning, verify that the Player-facing prompt contains no case-insensitive occurrence
-  of the forbidden text and no identifier associated with that answer.
+  of the forbidden text or other clue that identifies the correct answer.
 
 ## Output
 
