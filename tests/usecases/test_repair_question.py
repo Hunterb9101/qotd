@@ -10,7 +10,7 @@ import pytest
 from qotd.domain.models import GeneratedQuestionCandidate, Question, QuestionTopic
 from qotd.external.llm.openai import build_openai_llm_client
 from qotd.external.storage.memory import InMemoryAdapter
-from qotd.usecases.generate_question import validate_self_researched_candidate
+from qotd.usecases.generate_question import LLMQuestionEvaluator, validate_self_researched_candidate
 from qotd.usecases.repair_question import RepairGeneratedQuestion
 
 
@@ -24,15 +24,21 @@ def _api_key() -> str:
     return api_key
 
 
-def _repair(candidate: GeneratedQuestionCandidate) -> GeneratedQuestionCandidate:
-    repair = RepairGeneratedQuestion(
-        llm_client=build_openai_llm_client(
-            api_key=_api_key(),
-            model=os.environ.get("OPENAI_GENERATOR_MODEL", "gpt-5.4-mini"),
-            state=InMemoryAdapter(),
-        )
+def _live_llm_client():
+    return build_openai_llm_client(
+        api_key=_api_key(),
+        model=os.environ.get("OPENAI_GENERATOR_MODEL", "gpt-5.4-mini"),
+        state=InMemoryAdapter(),
     )
+
+
+def _repair(candidate: GeneratedQuestionCandidate) -> GeneratedQuestionCandidate:
+    repair = RepairGeneratedQuestion(llm_client=_live_llm_client())
     return repair(candidate, ("question prompt leaks the correct answer",))
+
+
+def _evaluate(candidate: GeneratedQuestionCandidate) -> tuple[str, ...]:
+    return LLMQuestionEvaluator(llm_client=_live_llm_client())(candidate)
 
 
 @pytest.mark.intg
@@ -43,7 +49,7 @@ def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
         question=Question(
             game_date=date(2026, 7, 10).isoformat(),
             prompt="Ziggy is one of the wake words available on an Amazon Echo. Which wake word can you choose?",
-            options={"A": "Siri", "B": "Ziggy", "C": "Cortana", "D": "Bixby"},
+            options={"A": "Nova", "B": "Ziggy", "C": "Orbit", "D": "Nimbus"},
             correct_option="B",
             source_note="Amazon documents the available Echo wake words.",
             source_url="https://www.amazon.com/gp/help/customer/display.html?nodeId=GKLXVX2X7B8P6Q5C",
@@ -64,6 +70,7 @@ def test_repair_question_removes_answer_leak_from_player_prompt() -> None:
     assert "ziggy" not in repaired.question.prompt.casefold()
     assert "echo" in repaired.question.prompt.casefold()
     validate_self_researched_candidate(repaired)
+    assert _evaluate(repaired) == ()
 
 
 @pytest.mark.intg
@@ -103,3 +110,4 @@ def test_repair_question_removes_city_answer_leak_from_player_prompt() -> None:
     assert repaired.question.prompt != candidate.question.prompt
     assert "st. louis" not in repaired.question.prompt.casefold()
     validate_self_researched_candidate(repaired)
+    assert _evaluate(repaired) == ()
