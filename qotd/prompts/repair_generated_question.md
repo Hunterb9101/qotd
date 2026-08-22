@@ -41,4 +41,8 @@ wording or answer choices that do not contribute to a reported problem.
 - Keep exactly four distinct options labeled A, B, C, and D with exactly one unambiguous answer.
 - Do not add, replace, or invent sources. The supplied URLs and evidence remain authoritative.
 - Do not expose or strongly hint at the correct answer in the Player-facing prompt.
+- If an issue says the prompt leaks the correct answer, rewrite the Player-facing prompt. Returning
+  the original prompt is invalid, even if the options or source note change.
+- Before returning, confirm that the Player-facing prompt does not contain the correct answer,
+  including a case-insensitive match.
 - Return only the repaired structured fields. Do not include markdown, commentary, or extra keys.

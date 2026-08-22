@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from qotd.external.llm.openai import OpenAILLMClient, render_prompt
-from qotd.usecases.repair_question import RepairedQuestionOutput
+from qotd.usecases.repair_question import DEFAULT_REPAIR_PROMPT_PATH, RepairedQuestionOutput
 from qotd.external.storage.memory import InMemoryAdapter
 
 
@@ -52,6 +52,28 @@ class OpenAILLMClientTests(unittest.TestCase):
             )
 
         self.assertEqual(rendered, "Topic: Jupiter\nA B C D ")
+
+    def test_repair_prompt_requires_rewriting_an_answer_leak(self) -> None:
+        rendered = render_prompt(
+            DEFAULT_REPAIR_PROMPT_PATH,
+            {
+                "category": "Food",
+                "topic": "Cheese production",
+                "question": {
+                    "prompt": "Why is Wisconsin the biggest cheese producer?",
+                    "options": {"A": "California", "B": "New York", "C": "Wisconsin", "D": "Texas"},
+                    "correct_option": "C",
+                    "correct_answer": "Wisconsin",
+                    "source_note": "USDA data",
+                },
+                "sources": [{"url": "https://example.com", "evidence": "Wisconsin produces the most cheese."}],
+                "issues": ["question prompt leaks the correct answer"],
+            },
+        )
+
+        self.assertIn("rewrite the Player-facing prompt", rendered)
+        self.assertIn("Returning\n  the original prompt is invalid", rendered)
+        self.assertIn("case-insensitive match", rendered)
 
     def test_create_structured_response_uses_pydantic_schema(self) -> None:
         client = FakeOpenAIClient({"option": "A"})
