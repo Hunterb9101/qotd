@@ -9,6 +9,14 @@ from email.message import EmailMessage
 from typing import Any
 
 
+ANSWER_INSTRUCTION_RESULT_SUBJECT = "QOTD Answer instruction result"
+MANUAL_SCORE_EVENT_RESULT_SUBJECT = "QOTD Manual Score Event result"
+ORGANIZER_OUTCOME_SUBJECTS = frozenset({
+    ANSWER_INSTRUCTION_RESULT_SUBJECT,
+    MANUAL_SCORE_EVENT_RESULT_SUBJECT,
+})
+
+
 @dataclass(frozen=True)
 class ParsedEmailMessage:
     """Normalized email message data."""

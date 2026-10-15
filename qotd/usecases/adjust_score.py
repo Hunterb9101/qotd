@@ -18,9 +18,13 @@ from qotd.domain.canonical import (
     gmail_message_key,
     new_id,
 )
-from qotd.domain.dates import monthly_series
+from qotd.domain.dates import QUESTION_SUBJECT_PREFIX, monthly_series
 from qotd.domain.models import ManualScoreEvent, ScoreboardLine
-from qotd.external.email.core import ParsedEmailMessage
+from qotd.external.email.core import (
+    MANUAL_SCORE_EVENT_RESULT_SUBJECT,
+    ORGANIZER_OUTCOME_SUBJECTS,
+    ParsedEmailMessage,
+)
 from qotd.external.email.runtime import build_organizer_email, mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
 from qotd.usecases.record_score_event import ManualScoreEventRequest, record_score_event
@@ -429,6 +433,8 @@ def process_manual_score_event_emails(
 
     processed: list[ManualScoreEventEmailProcessingResult] = []
     for message in fetch(config.query):
+        if message.subject in ORGANIZER_OUTCOME_SUBJECTS or message.subject.startswith(QUESTION_SUBJECT_PREFIX):
+            continue
         normalized_sender = normalize_email_addresses([message.sender_email])
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
         if sender_email not in approved_senders:
@@ -473,7 +479,7 @@ def process_manual_score_event_emails(
         response = build_organizer_email(
             sender=config.sender,
             organizer=sender_email,
-            subject="QOTD Manual Score Event result",
+            subject=MANUAL_SCORE_EVENT_RESULT_SUBJECT,
             body=response_body,
         )
         response_message_id = f"dry-run:{message.message_id}"
