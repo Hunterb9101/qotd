@@ -1,0 +1,11 @@
+# Non-secret configuration shared by QOTD Cloud Run Jobs.
+# Secrets are deliberately absent. deploy.sh binds Secret Manager versions at
+# runtime, so this file is safe to review and commit.
+GOOGLE_CLOUD_PROJECT: question-of-the-day-501919
+BIGQUERY_DATASET: qotd
+
+# Pin model selection independently from the application defaults so a model
+# change is a reviewed infrastructure change.
+OPENAI_GENERATOR_MODEL: gpt-5.4-mini
+OPENAI_WEB_SEARCH_MODEL: gpt-5.4-mini
+OPENAI_INTERPRETER_MODEL: gpt-5.4
