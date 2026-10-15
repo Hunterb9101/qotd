@@ -4,25 +4,30 @@ This guide covers production setup and the human workflows used to operate QOTD.
 
 ## Production Schedule
 
-GitHub Actions schedules the weekday game at fixed UTC times:
+GitHub Actions schedules both UTC offsets used by `America/Denver`, then each
+workflow proceeds only when the runner is in its intended Denver hour. This
+keeps the weekday game aligned with QOTD's [Day](DEFINITIONS.md#day) through
+daylight-saving changes:
 
-- 15:00 UTC: scoring update sent to the Organizer
-- 19:00 UTC: Question sent to Players
+- 7:55 AM `America/Denver`: process Organizer Instructions
+- 8 AM `America/Denver`: scoring update sent to the Organizer
+- noon `America/Denver`: Question sent to Players
 
-This is 8 AM and noon in Phoenix year-round. QOTD's [Day](DEFINITIONS.md#day)
-uses `America/Denver`, so the scheduled workflows run one hour later there
-during daylight time (9 AM and 1 PM) and at their nominal times during standard
-time. Fixed UTC scheduling is intentional: GitHub Actions may start a scheduled
-run late, and a runner-local-time guard could otherwise silently skip the
-workflow entirely.
+GitHub Actions scheduling is best-effort and may start a run late. The
+workflows accept the intended Denver *hour* rather than requiring an exact
+minute, and the canonical state prevents a retry from creating a duplicate
+Game or Message. If a run is delayed beyond that hour, use **Run workflow** in
+the repository's **Actions** tab to recover it.
 
 The Player [Submission](DEFINITIONS.md#submission) cutoff remains 7 AM
 `America/Denver`; it is determined by each [Game](DEFINITIONS.md#game)'s
 [Deadline](DEFINITIONS.md#deadline), not by a scheduled GitHub Actions run.
 
-The management-email workflow runs at `13:55 UTC` (7:55 AM in Phoenix). It
-processes Answer instructions first and Manual Score Event instructions second.
-Both workflows share a concurrency group so their state writes do not overlap.
+The management-email workflow processes Answer instructions first and Manual
+Score Event instructions second. It and the scoring workflow share a
+concurrency group so their state writes do not overlap. Publication attempts
+also have a separate concurrency group, which serializes scheduled and manual
+publication runs.
 
 ## Email and Players
 
@@ -98,6 +103,12 @@ The production workflows live in `.github/workflows`:
 - `qotd-send.yml` sends questions.
 - `qotd-score.yml` scores replies and reports results.
 - `qotd-score-adjustments.yml` processes management email.
+
+`qotd-test.yml` runs the deterministic test suite for pull requests and pushes
+to `main`. `qotd-operational-failure.yml` creates (or adds the latest failed
+run to) an open GitHub Issue named `QOTD operational workflow failure` when a
+production workflow fails. Watch the repository or that Issue to receive
+GitHub notifications, and close the Issue only after recovery.
 
 ## Manual Questions and Answers
 

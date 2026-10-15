@@ -2,10 +2,17 @@ name: Publish QOTD Question
 
 on:
   schedule:
-    # 19:00 UTC is noon in Phoenix year-round. Fixed UTC scheduling avoids
-    # skipping a delayed GitHub Actions run because its runner starts late.
+    # GitHub Actions cron uses UTC. Run at both possible UTC offsets, then
+    # admit only the invocation that is in the intended America/Denver hour.
+    - cron: "0 18 * * 1-5"
     - cron: "0 19 * * 1-5"
   workflow_dispatch:
+
+concurrency:
+  # Serializes scheduled and manually-dispatched publication attempts. Durable
+  # outbound-message idempotency remains the final duplicate-send safeguard.
+  group: qotd-publication
+  cancel-in-progress: false
 
 jobs:
   publish-question:
@@ -23,12 +30,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Confirm scheduled America/Denver hour
+        id: scheduled-hour
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ] || [ "$(TZ=America/Denver date +%H)" = "12" ]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "This UTC trigger is not the 12:00 America/Denver invocation; skipping."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.scheduled-hour.outputs.proceed == 'true'
         with:
           python-version: "3.13"
 
       - name: Install dependencies
+        if: steps.scheduled-hour.outputs.proceed == 'true'
         run: python -m pip install -r requirements.txt
 
       - name: Publish generated QOTD Question
+        if: steps.scheduled-hour.outputs.proceed == 'true'
         run: python -m qotd publish-question

@@ -1,0 +1,56 @@
+name: Report QOTD Operational Failure
+
+on:
+  workflow_run:
+    workflows:
+      - Process QOTD Score Events
+      - Score QOTD Responses
+      - Publish QOTD Question
+    types:
+      - completed
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report-failure:
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update the operational failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'QOTD operational workflow failure';
+            const run = context.payload.workflow_run;
+            const message = [
+              `**${run.name}** failed.`,
+              '',
+              `Run: ${run.html_url}`,
+              `Event: \`${run.event}\``,
+              `Conclusion: \`${run.conclusion}\``,
+              `Started: ${run.run_started_at}`,
+            ].join('\n');
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: message,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body: `${message}\n\nResolve this issue after the failed run has been investigated.`,
+              });
+            }
