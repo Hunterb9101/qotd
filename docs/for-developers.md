@@ -63,6 +63,12 @@ OPENAI_API_KEY="..." pytest -m intg
 
 Set `OPENAI_INTERPRETER_MODEL` to select the live evaluation model. Explicit integration runs fail with a configuration error when `OPENAI_API_KEY` is missing.
 
+The live question-repair evaluation uses the configured generator model and verifies that a repair removes a leaked answer from the player-facing prompt:
+
+```bash
+OPENAI_API_KEY="..." pytest -m intg tests/usecases/test_repair_question.py
+```
+
 Canonical BigQuery changes must also pass the isolated-storage integration test before deployment. Create an empty non-production dataset whose name ends in `_test`, then configure it separately from production:
 
 ```bash

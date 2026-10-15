@@ -10,6 +10,7 @@ import pytest
 
 from qotd.domain.models import StoredQuestion
 from qotd.external.llm.openai import build_openai_llm_client
+from qotd.external.storage.memory import InMemoryAdapter
 from qotd.usecases.score_submissions import LLMAnswerInterpreter
 
 
@@ -44,7 +45,8 @@ def test_score_submissions_live_answer_interpretation(case: dict[str, object]) -
     interpreter = LLMAnswerInterpreter(
         llm_client=build_openai_llm_client(
             api_key=_api_key(),
-            model=os.environ.get("OPENAI_INTERPRETER_MODEL", "gpt-4.1-mini"),
+            model=os.environ.get("OPENAI_INTERPRETER_MODEL", "gpt-5.4"),
+            state=InMemoryAdapter(),
         ),
         question=question,
     )

@@ -287,6 +287,17 @@ def _rejection_summary(attempt: int, issues: tuple[str, ...]) -> str:
     return f"attempt {attempt}: " + "; ".join(issues)
 
 
+def _mark_unchanged_repair_issues(
+    issues: tuple[str, ...],
+    repaired_issues: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Make a rejected repair explicit when it did not resolve any reported issue."""
+
+    if repaired_issues is not None and issues == repaired_issues:
+        return ("repair returned a candidate with unchanged issues: " + "; ".join(issues),)
+    return issues
+
+
 def generate_question_samples(
     config: GenerateQuestionSamplesConfig,
     *,
@@ -321,8 +332,10 @@ def generate_question_samples(
         candidate: GeneratedQuestionCandidate | None = None
         issues: tuple[str, ...] = ()
         for attempt in range(1, config.attempts + 1):
+            repaired_issues: tuple[str, ...] | None = None
             try:
                 if candidate is not None and repair_question is not None:
+                    repaired_issues = issues
                     candidate = repair_question(candidate, issues)
                 else:
                     candidate = generate_question(
@@ -343,8 +356,9 @@ def generate_question_samples(
                 evaluate_question=evaluate_question,
             )
             if issues:
+                issues = _mark_unchanged_repair_issues(issues, repaired_issues)
                 rejection_reasons.append(_rejection_summary(attempt, issues))
-                if repair_question is None:
+                if repair_question is None or repaired_issues is not None:
                     candidate = None
                 continue
             candidates.append(candidate)
@@ -492,8 +506,10 @@ def generate_researched_question(
     research_evidence: tuple[WebSearchResult, ...] = ()
     issues: tuple[str, ...] = ()
     for attempt in range(1, config.attempts + 1):
+        repaired_issues: tuple[str, ...] | None = None
         try:
             if candidate is not None and repair_question is not None:
+                repaired_issues = issues
                 candidate = repair_question(candidate, issues)
             else:
                 discovered = discover_question_topic_from_web(
@@ -535,8 +551,9 @@ def generate_researched_question(
             evaluate_question=evaluate_question,
         )
         if issues:
+            issues = _mark_unchanged_repair_issues(issues, repaired_issues)
             rejection_reasons.append(_rejection_summary(attempt, issues))
-            if repair_question is None:
+            if repair_question is None or repaired_issues is not None:
                 candidate = None
             continue
         return ResearchedQuestionResult(candidate, attempt, tuple(rejection_reasons))
