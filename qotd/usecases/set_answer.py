@@ -11,7 +11,11 @@ from urllib.parse import urlparse
 from qotd.domain.contacts import normalize_email_addresses
 from qotd.domain.canonical import OUTBOUND_PENDING, OutboundMessage, new_id
 from qotd.domain.models import OPTION_LABELS
-from qotd.external.email.core import ParsedEmailMessage
+from qotd.external.email.core import (
+    ANSWER_INSTRUCTION_RESULT_SUBJECT,
+    ORGANIZER_OUTCOME_SUBJECTS,
+    ParsedEmailMessage,
+)
 from qotd.external.email.runtime import build_organizer_email, mark_gmail_message_read, search_messages, send_gmail_message
 from qotd.external.storage.canonical import CanonicalState
 from qotd.usecases.handle_answer import ANSWER_TEMPLATE_SOURCE_URL, apply_answer_instruction
@@ -183,6 +187,8 @@ def process_set_answer_emails(
 
     processed: list[SetAnswerEmailProcessingResult] = []
     for message in fetch(config.query):
+        if message.subject in ORGANIZER_OUTCOME_SUBJECTS:
+            continue
         normalized_sender = normalize_email_addresses([message.sender_email])
         sender_email = normalized_sender[0] if normalized_sender else message.sender_email
         update_result: SetAnswerResult | None = None
@@ -216,7 +222,7 @@ def process_set_answer_emails(
         response = build_organizer_email(
             sender=config.sender,
             organizer=sender_email,
-            subject="QOTD Answer instruction result",
+            subject=ANSWER_INSTRUCTION_RESULT_SUBJECT,
             body=response_body,
         )
         response_message_id = f"dry-run:{message.message_id}"

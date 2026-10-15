@@ -21,7 +21,7 @@ from qotd.domain.canonical import (
 )
 from qotd.domain.dates import answer_cutoff_at, next_scoring_day
 from qotd.domain.models import OPTION_LABELS
-from qotd.external.email.core import ParsedEmailMessage
+from qotd.external.email.core import ANSWER_INSTRUCTION_RESULT_SUBJECT, ParsedEmailMessage
 from qotd.external.storage.canonical import CanonicalState
 from qotd.usecases.parse_organizer_instruction import OrganizerInstructionPayload, parse_organizer_instruction_payload
 
@@ -178,7 +178,7 @@ def _outcome_message(
     return OutboundMessage(
         id=new_id(), idempotency_key=f"answer-outcome:{message.message_id}",
         message_type="organizer_instruction_outcome", recipient=recipient,
-        subject="QOTD Answer instruction result", body_text=body, status=OUTBOUND_PENDING,
+        subject=ANSWER_INSTRUCTION_RESULT_SUBJECT, body_text=body, status=OUTBOUND_PENDING,
         created_at=processed_at, organizer_instruction_id=instruction.id,
     )
 

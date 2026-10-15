@@ -193,3 +193,26 @@ def test_legacy_answer_action_is_discovered_and_durably_rejected() -> None:
     instruction = next(iter(state.instructions.values()))
     assert instruction.status == "rejected"
     assert instruction.action == "set-correct-answer"
+
+
+def test_answer_processing_ignores_automated_organizer_outcomes() -> None:
+    state = InMemoryAdapter()
+
+    result = process_set_answer_emails(
+        ProcessSetAnswerEmailsConfig(
+            sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
+            oauth_client_id="client-id", oauth_client_secret="client-secret", oauth_refresh_token="refresh-token",
+            state_store=state,
+        ),
+        fetch_messages=lambda _query: [
+            ParsedEmailMessage(
+                "outcome", "thread", "organizer@example.com", "QOTD Answer instruction result",
+                datetime(2026, 8, 9, tzinfo=UTC), "Answer instruction rejected.",
+            )
+        ],
+        send_message=lambda _message: "response",
+        mark_message_handled=lambda _message_id: None,
+    )
+
+    assert result.processed == ()
+    assert state.instructions == state.outbound_messages == {}

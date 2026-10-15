@@ -184,6 +184,48 @@ def test_manual_score_event_ignores_a_player_submission() -> None:
     assert handled == []
 
 
+def test_manual_score_event_ignores_automated_organizer_outcomes() -> None:
+    state = InMemoryAdapter()
+    outcome = ParsedEmailMessage(
+        "outcome", "thread", "organizer@example.com", "QOTD Manual Score Event result",
+        datetime(2026, 8, 11, tzinfo=UTC), "Manual Score Event request rejected.",
+    )
+
+    result = process_manual_score_event_emails(
+        ProcessManualScoreEventEmailsConfig(
+            sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
+            oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
+        ),
+        fetch_messages=lambda _query: [outcome],
+        send_message=lambda _message: "response",
+        mark_message_handled=lambda _message_id: None,
+    )
+
+    assert result.processed == ()
+    assert state.instructions == state.outbound_messages == {}
+
+
+def test_manual_score_event_ignores_question_subjects() -> None:
+    state = InMemoryAdapter()
+    question = ParsedEmailMessage(
+        "question", "thread", "organizer@example.com", "QOTD - 08-10-26",
+        datetime(2026, 8, 11, tzinfo=UTC), "Action: record-score-event\nPlayer: ada@example.com\nSeries: 0826\nPoints: 1\nReason: correction",
+    )
+
+    result = process_manual_score_event_emails(
+        ProcessManualScoreEventEmailsConfig(
+            sender="sender@example.com", gmail_user="sender@example.com", organizer_emails=("organizer@example.com",),
+            oauth_client_id="client", oauth_client_secret="secret", oauth_refresh_token="token", state_store=state,
+        ),
+        fetch_messages=lambda _query: [question],
+        send_message=lambda _message: "response",
+        mark_message_handled=lambda _message_id: None,
+    )
+
+    assert result.processed == ()
+    assert state.instructions == state.outbound_messages == {}
+
+
 def test_manual_score_event_commits_instruction_event_and_outcome_before_delivery() -> None:
     state = InMemoryAdapter()
     series = state.create_or_find_series(name="August", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31))

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 MOUNTAIN_TIME = ZoneInfo("America/Denver")
 ANSWER_CUTOFF_TIME = time(hour=7, minute=0, tzinfo=MOUNTAIN_TIME)
+QUESTION_SUBJECT_PREFIX = "QOTD - "
 
 
 def is_weekday(value: date) -> bool:
@@ -21,7 +22,7 @@ def question_subject(game_date: date | str) -> str:
 
     parsed_date = game_date if isinstance(game_date, date) else date.fromisoformat(game_date)
     date_text = parsed_date.strftime("%m-%d-%y")
-    return f"QOTD - {date_text}"
+    return f"{QUESTION_SUBJECT_PREFIX}{date_text}"
 
 
 def current_game_date() -> date:
