@@ -59,8 +59,10 @@ A service account works only when you control the Google Workspace domain, so ot
 
 QOTD stores Game state in a BigQuery dataset. Google Cloud requires a billing account for DML SQL commands, although this project's small workload should remain within the free tier.
 
-The dataset must not set a default table or partition expiration: QOTD's canonical
-Game state is retained indefinitely. Clear either default before provisioning:
+The dataset must not set a default table or partition expiration while QOTD's
+canonical state has no implemented deletion workflow. Before provisioning,
+review and approve the retention decisions in
+[Data Handling and Retention](data-handling.md), then clear either default:
 
 ```sh
 bq update --default_table_expiration 0 --default_partition_expiration 0 question-of-the-day-501919:qotd
@@ -99,6 +101,14 @@ The production workflows live in `.github/workflows`:
 - `qotd-score.yml` scores replies and reports results.
 - `qotd-score-adjustments.yml` processes management email.
 
+## Data Handling and Retention
+
+QOTD's canonical dataset retains Player email addresses, Submission bodies,
+Outbound Message content, and AI Calls, in addition to Game and scoring state.
+Review [Data Handling and Retention](data-handling.md) before enabling
+production workflows. It documents the current indefinite retention behavior,
+least-privilege access expectations, incident response, and the retention and
+deletion decisions that require Organizer approval.
 ## Manual Questions and Answers
 
 QOTD respects a question sent manually from the configured organizer address. Send the question to the private Google Group with this exact subject:
