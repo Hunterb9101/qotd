@@ -5,6 +5,7 @@ from email.message import EmailMessage
 
 import pytest
 
+from qotd.domain.canonical import OutboundMessage
 from qotd.domain.models import Question
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.external.storage.memory import InMemoryAdapter
@@ -92,3 +93,47 @@ def test_delivered_group_question_retains_reply_to_sender() -> None:
 
     assert len(sent) == 1
     assert sent[0]["Reply-To"] == "sender@example.com"
+
+
+def test_publication_loser_does_not_send_another_question() -> None:
+    """Only the run whose intent is persisted is allowed to deliver it."""
+
+    class CompetingPublicationAdapter(InMemoryAdapter):
+        def replace_pending_game(self, game, *, series=None, outbound_message=None):  # type: ignore[no-untyped-def]
+            assert outbound_message is not None
+            competing_intent = OutboundMessage(
+                id="competing-intent",
+                idempotency_key=outbound_message.idempotency_key,
+                message_type=outbound_message.message_type,
+                recipient=outbound_message.recipient,
+                subject=outbound_message.subject,
+                body_text=outbound_message.body_text,
+                status=outbound_message.status,
+                created_at=outbound_message.created_at,
+                game_id=outbound_message.game_id,
+            )
+            return super().replace_pending_game(game, series=series, outbound_message=competing_intent)
+
+    sent: list[EmailMessage] = []
+    result = send_question(
+        SendQuestionConfig(
+            game_date=date(2026, 8, 10),
+            sender="sender@example.com",
+            gmail_user="sender@example.com",
+            oauth_client_id="client-id",
+            oauth_client_secret="client-secret",
+            oauth_refresh_token="refresh-token",
+            state_store=CompetingPublicationAdapter(),
+            google_group_email="qotd-group@googlegroups.com",
+            question_generator=lambda game_date, _store: Question(
+                game_date=game_date.isoformat(), prompt="Question?",
+                options={"A": "A", "B": "B", "C": "C", "D": "D"},
+                correct_option="A", source_note="Source", source_url="https://example.com/source",
+            ),
+        ),
+        fetch_messages=lambda _query: [],
+        send_message=lambda message: sent.append(message) or "unexpected-send",
+    )
+
+    assert result.reason == "publication_intent_already_exists"
+    assert sent == []
