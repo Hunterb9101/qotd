@@ -51,6 +51,13 @@ A service account works only when you control the Google Workspace domain, so ot
 
 QOTD stores Game state in a BigQuery dataset. Google Cloud requires a billing account for DML SQL commands, although this project's small workload should remain within the free tier.
 
+The dataset must not set a default table or partition expiration: QOTD's canonical
+Game state is retained indefinitely. Clear either default before provisioning:
+
+```sh
+bq update --default_table_expiration 0 --default_partition_expiration 0 question-of-the-day-501919:qotd
+```
+
 Before enabling canonical workflows, pause the scheduled workflows and provision an existing, reviewed target dataset locally:
 
 ```sh
