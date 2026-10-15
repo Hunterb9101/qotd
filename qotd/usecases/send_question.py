@@ -169,17 +169,21 @@ def send_question(
         created_at=published_at,
         game_id=game_id,
     )
-    record = stored_question_from_game(
-        publish_automated_game(
-            state=state,
-            game_day=config.game_date,
-            question=question,
-            message_id=outbound_message.idempotency_key,
-            published_at=published_at,
-            outbound_message=outbound_message,
-            game_id=game_id,
-        )
+    game = publish_automated_game(
+        state=state,
+        game_day=config.game_date,
+        question=question,
+        message_id=outbound_message.idempotency_key,
+        published_at=published_at,
+        outbound_message=outbound_message,
+        game_id=game_id,
     )
+    persisted_intent = state.find_outbound_message(idempotency_key=publication_key)
+    if persisted_intent is None:
+        raise RuntimeError("Published Question has no outbound intent")
+    if persisted_intent.id != outbound_message.id:
+        return _published_question_result(game)
+    record = stored_question_from_game(game)
     if not config.dry_run:
         assert fetch_messages is not None
         deliver_outbound_message(
