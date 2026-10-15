@@ -1,0 +1,58 @@
+name: Deploy QOTD Cloud Run Jobs
+
+on:
+  workflow_run:
+    workflows:
+      - Test QOTD
+    types:
+      - completed
+  workflow_dispatch:
+
+# The deployment identity is obtained through GitHub OIDC; no long-lived GCP
+# credential is stored in GitHub. Define these repository or environment
+# variables with the WIF provider resource name and deployer service account.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build and deploy main
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PROJECT_ID: question-of-the-day-501919
+      REGION: us-central1
+      REPOSITORY: qotd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Manual dispatch must have the same source-of-truth as push events.
+          ref: main
+
+      - name: Set immutable main revision
+        run: echo "IMAGE_TAG=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build immutable image from main
+        run: >-
+          gcloud builds submit
+          --project="$PROJECT_ID"
+          --tag="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/qotd:$IMAGE_TAG"
+
+      - name: Redeploy QOTD Jobs without changing scheduler state
+        env:
+          MANAGE_SCHEDULERS: "false"
+        run: bash infra/cloud-run/deploy.sh

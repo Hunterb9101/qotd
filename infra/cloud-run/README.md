@@ -27,9 +27,11 @@ Both Jobs receive `OPENAI_API_KEY`: the morning Job uses it to interpret
 freeform Player Submissions during scoring, and the publication Job uses it to
 generate the Question.
 
-`deploy.sh` creates or updates every Scheduler job and then pauses it. This
-makes the first deployment safe: no scheduled execution can race the current
-GitHub Actions schedule, and makes subsequent reviewed deployments rerunnable.
+`deploy.sh` pauses Scheduler triggers when it creates them. On subsequent
+deployments it preserves each trigger's current enabled/paused state, so an
+image redeploy does not silently interrupt production scheduling. Set
+`SCHEDULER_MODE=paused` for a maintenance deployment that must pause both
+triggers explicitly.
 
 Cloud Run's `parallelism=1` prevents parallel Tasks within one Job. Combining
 the morning work into one Job preserves the existing required ordering without
@@ -91,6 +93,30 @@ gcloud builds submit --project=question-of-the-day-501919 \
   --tag=us-central1-docker.pkg.dev/question-of-the-day-501919/qotd/qotd:COMMIT_SHA
 IMAGE_TAG=COMMIT_SHA bash infra/cloud-run/deploy.sh
 ```
+
+## Continuous deployment from `main`
+
+`.github/workflows/deploy-cloud-run-jobs.yml` rebuilds the image and redeploys
+both Jobs after the `Test QOTD` workflow successfully completes for `main`.
+Its checkout is explicitly pinned to `main`, including when manually
+dispatched, and it tags the image with that exact Git commit SHA. The workflow
+authenticates with GitHub OIDC, not a stored GCP credential. Configure these
+`production` environment (or repository) variables before enabling it:
+
+| Variable | Value |
+| --- | --- |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full Workload Identity Provider resource name for this repository's GitHub Actions pool provider |
+| `GCP_DEPLOYER_SERVICE_ACCOUNT` | Email of the GCP deployer service account trusted by that provider |
+
+The deployer identity needs permissions to submit Cloud Build builds, push to
+the Artifact Registry repository, and update the two Cloud Run Jobs. Scope
+those permissions to this project and these resources where supported. The CD
+workflow invokes `deploy.sh` with `MANAGE_SCHEDULERS=false`, so it neither
+requires Cloud Scheduler permissions nor changes a trigger's configuration or
+state. Keep Scheduler administration for the explicit infrastructure/cutover
+workflow. `deploy.sh` defaults to `MANAGE_SCHEDULERS=true` for that explicit
+use; with scheduler management enabled, its `SCHEDULER_MODE=preserve` default
+keeps existing triggers in their current enabled/paused state.
 
 Grant the Scheduler identity invoker access on all Jobs, then inspect the
 paused triggers and execute each Job manually once. Confirm the expected

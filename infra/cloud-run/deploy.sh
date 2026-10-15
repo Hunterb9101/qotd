@@ -11,6 +11,29 @@ IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/qotd:${IMAGE_TAG}"
 RUNTIME_SERVICE_ACCOUNT="${RUNTIME_SERVICE_ACCOUNT:-qotd-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 SCHEDULER_SERVICE_ACCOUNT="${SCHEDULER_SERVICE_ACCOUNT:-qotd-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
 ENV_FILE="infra/cloud-run/job-environment.yaml"
+# ``preserve`` is appropriate for normal redeploys: changing the Job image
+# must not silently stop an enabled production schedule. New triggers remain
+# paused so that an initial deployment still requires an explicit cutover.
+SCHEDULER_MODE="${SCHEDULER_MODE:-preserve}"
+# Runtime image deployments do not need permission to alter Scheduler. Leave
+# trigger management to explicit infrastructure/cutover deployments.
+MANAGE_SCHEDULERS="${MANAGE_SCHEDULERS:-true}"
+
+case "$SCHEDULER_MODE" in
+  preserve|paused) ;;
+  *)
+    echo "SCHEDULER_MODE must be 'preserve' or 'paused'; got: $SCHEDULER_MODE" >&2
+    exit 2
+    ;;
+esac
+
+case "$MANAGE_SCHEDULERS" in
+  true|false) ;;
+  *)
+    echo "MANAGE_SCHEDULERS must be 'true' or 'false'; got: $MANAGE_SCHEDULERS" >&2
+    exit 2
+    ;;
+esac
 
 # Every listed secret must have a real, enabled Secret Manager version before
 # deploying. Cloud Run validates each binding when the Job is created, so empty
@@ -65,7 +88,9 @@ deploy_python_job qotd-publish 'publish-question' "$COMMON_SECRETS,$OPENAI_SECRE
 
 # Cloud Scheduler's timezone support keeps these at the product's required
 # America/Denver local times through daylight-saving transitions. Every trigger
-# is paused after create or update; see README for validation and cutover order.
+# is paused after its initial creation. Normal image redeploys preserve an
+# existing trigger's enabled/paused state; set SCHEDULER_MODE=paused when a
+# maintenance deploy must explicitly pause all triggers.
 upsert_paused_scheduler() {
   local scheduler_name="$1"
   local schedule="$2"
@@ -97,9 +122,17 @@ upsert_paused_scheduler() {
       --attempt-deadline=30m \
       --max-retry-attempts=1 \
       --max-backoff=15m
+    # A new trigger is deliberately paused, independent of deploy mode.
+    gcloud scheduler jobs pause "$scheduler_name" --project="$PROJECT_ID" --location="$REGION"
+    return
   fi
-  gcloud scheduler jobs pause "$scheduler_name" --project="$PROJECT_ID" --location="$REGION"
+
+  if [[ "$SCHEDULER_MODE" == "paused" ]]; then
+    gcloud scheduler jobs pause "$scheduler_name" --project="$PROJECT_ID" --location="$REGION"
+  fi
 }
 
-upsert_paused_scheduler qotd-morning '55 7 * * 1-5' qotd-morning
-upsert_paused_scheduler qotd-publish '0 12 * * 1-5' qotd-publish
+if [[ "$MANAGE_SCHEDULERS" == "true" ]]; then
+  upsert_paused_scheduler qotd-morning '55 7 * * 1-5' qotd-morning
+  upsert_paused_scheduler qotd-publish '0 12 * * 1-5' qotd-publish
+fi
