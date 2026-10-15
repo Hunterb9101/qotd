@@ -130,9 +130,13 @@ class InMemoryAdapter(CanonicalState):
         game = self.games[submission.game_id]
         if submission.received_at >= game.deadline_at:
             recorded = replace(submission, is_eligible=False, ineligibility_reason="late")
+        elif game.status == GAME_SCORED:
+            recorded = replace(submission, is_eligible=False, ineligibility_reason="frozen")
         else:
             recorded = replace(submission, is_eligible=True, ineligibility_reason=None)
         self.submissions[recorded.id] = recorded
+        if game.status == GAME_SCORED:
+            return recorded
         eligible = [
             item for item in self.submissions.values()
             if item.game_id == recorded.game_id and item.player_id == recorded.player_id

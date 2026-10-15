@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from qotd.domain.canonical import GAME_PENDING, Game, ScoreEvent, ScoreboardEntry, Submission, new_id
+from qotd.domain.canonical import GAME_PENDING, GAME_SCORED, Game, ScoreEvent, ScoreboardEntry, Submission, new_id
 from qotd.external.storage.memory import InMemoryAdapter
 
 
@@ -66,6 +66,42 @@ def test_canonical_state_retains_late_and_superseded_submissions() -> None:
     assert state.submissions[first.id].ineligibility_reason == "superseded"
     assert second.is_eligible
     assert late.ineligibility_reason == "late"
+
+
+def test_audit_submission_cannot_change_a_scored_games_frozen_selection() -> None:
+    state = InMemoryAdapter()
+    now = datetime(2026, 8, 11, 12, tzinfo=UTC)
+    series = state.create_or_find_series(
+        name="August 2026", starts_on=date(2026, 8, 1), ends_on=date(2026, 8, 31)
+    )
+    player = state.create_or_find_player(email="ada@example.com")
+    game = state.publish_game(
+        Game(
+            id=new_id(), series_id=series.id, day=date(2026, 8, 10), status=GAME_PENDING,
+            publication_mode="manual", deadline_at=now, created_at=now, updated_at=now, correct_option="A",
+        )
+    )
+    selected = state.record_submission(
+        Submission(new_id(), "selected", game.id, player.id, "A", now.replace(hour=10), True, now, now)
+    )
+    state.score_game(
+        Game(**{**game.__dict__, "scored_at": now}),
+        score_events=(
+            ScoreEvent(
+                new_id(), "automatic", player.id, series.id, "automatic", 1, now,
+                game_id=game.id, submission_id=selected.id,
+            ),
+        ),
+    )
+
+    audited = state.record_submission(
+        Submission(new_id(), "audited", game.id, player.id, "B", now.replace(hour=11), True, now, now)
+    )
+
+    assert state.games[game.id].status == GAME_SCORED
+    assert state.submissions[selected.id].is_eligible
+    assert state.submissions[audited.id].ineligibility_reason == "frozen"
+    assert next(iter(state.score_events.values())).submission_id == selected.id
 
 
 def test_manual_score_event_adds_a_new_player_to_the_scoreboard() -> None:
