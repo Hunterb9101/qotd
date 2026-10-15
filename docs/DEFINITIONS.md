@@ -159,6 +159,9 @@ The recorded reason a [**Submission**](#submission) is not used for scoring.
 - **late:** The Submission was received at or after the
   [**Question**](#question)'s [**Deadline**](#deadline). A late Submission does
   not supersede an earlier eligible Submission.
+- **frozen:** The Submission was collected after the [**Game**](#game)'s
+  selection was frozen for scoring. It is retained for audit but cannot change
+  the Submission used by an automatic [**Score Event**](#score-event).
 
 ### Organizer Workflow
 

@@ -354,19 +354,27 @@ class BQAdapter(CanonicalState):
         values = asdict(submission)
         fields = tuple(values)
         statement = f"""
+            DECLARE submission_is_new BOOL DEFAULT FALSE;
             MERGE `{self.table('submissions')}` AS target
             USING (SELECT {', '.join(f'@{field} AS {field}' for field in fields)}) AS source
             ON target.source_message_key = source.source_message_key
             WHEN NOT MATCHED THEN INSERT ({', '.join(fields)}) VALUES ({', '.join(f'source.{field}' for field in fields)});
+            SET submission_is_new = @@row_count = 1;
             UPDATE `{self.table('submissions')}` AS item
-            SET is_eligible = item.received_at < game.deadline_at,
-                ineligibility_reason = IF(item.received_at < game.deadline_at, NULL, 'late')
+            SET is_eligible = item.received_at < game.deadline_at AND game.status != 'scored',
+                ineligibility_reason = CASE
+                  WHEN item.received_at >= game.deadline_at THEN 'late'
+                  WHEN game.status = 'scored' THEN 'frozen'
+                  ELSE NULL
+                END
             FROM `{self.table('games')}` AS game
-            WHERE item.source_message_key = @source_message_key AND item.game_id = game.id;
+            WHERE submission_is_new AND item.source_message_key = @source_message_key AND item.game_id = game.id;
             UPDATE `{self.table('submissions')}` AS prior
             SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
             FROM `{self.table('submissions')}` AS selected_submission
+            JOIN `{self.table('games')}` AS game ON game.id = selected_submission.game_id
             WHERE selected_submission.source_message_key = @source_message_key
+              AND submission_is_new AND game.status != 'scored'
               AND selected_submission.is_eligible
               AND prior.game_id = selected_submission.game_id AND prior.player_id = selected_submission.player_id
               AND prior.is_eligible
@@ -377,7 +385,12 @@ class BQAdapter(CanonicalState):
             UPDATE `{self.table('submissions')}` AS selected_submission
             SET is_eligible = FALSE, ineligibility_reason = 'superseded', updated_at = @updated_at
             WHERE selected_submission.source_message_key = @source_message_key
+              AND submission_is_new
               AND selected_submission.is_eligible
+              AND EXISTS (
+                SELECT 1 FROM `{self.table('games')}` AS game
+                WHERE game.id = selected_submission.game_id AND game.status != 'scored'
+              )
               AND EXISTS (
                 SELECT 1 FROM `{self.table('submissions')}` AS later
                 WHERE later.game_id = selected_submission.game_id AND later.player_id = selected_submission.player_id

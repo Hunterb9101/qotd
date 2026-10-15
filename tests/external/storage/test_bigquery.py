@@ -498,6 +498,8 @@ def test_record_submission_classifies_deadline_and_supersession_in_one_transacti
     assert "BEGIN TRANSACTION;" in sql
     assert "item.received_at < game.deadline_at" in sql
     assert "'late'" in sql
+    assert "'frozen'" in sql
+    assert "game.status != 'scored'" in sql
     assert "'superseded'" in sql
     assert "prior.source_message_key < selected_submission.source_message_key" in sql
     assert "later.source_message_key > selected_submission.source_message_key" in sql
