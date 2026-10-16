@@ -21,20 +21,31 @@ class ExampleOutput(BaseModel):
 
 
 class FakeResponses:
-    def __init__(self, output: dict[str, Any] | Exception) -> None:
+    def __init__(
+        self, output: dict[str, Any] | Exception, usage: Any = None, response_output: Any = None
+    ) -> None:
         self.output = output
+        self.usage = usage
+        self.response_output = response_output
         self.calls: list[dict[str, Any]] = []
 
     def create(self, **kwargs: Any) -> SimpleNamespace:
         self.calls.append(kwargs)
         if isinstance(self.output, Exception):
             raise self.output
-        return SimpleNamespace(output_text=json.dumps(self.output))
+        response = SimpleNamespace(output_text=json.dumps(self.output))
+        if self.usage is not None:
+            response.usage = self.usage
+        if self.response_output is not None:
+            response.output = self.response_output
+        return response
 
 
 class FakeOpenAIClient:
-    def __init__(self, output: dict[str, Any] | Exception) -> None:
-        self.responses = FakeResponses(output)
+    def __init__(
+        self, output: dict[str, Any] | Exception, usage: Any = None, response_output: Any = None
+    ) -> None:
+        self.responses = FakeResponses(output, usage, response_output)
 
 
 class OpenAILLMClientTests(unittest.TestCase):
@@ -114,6 +125,40 @@ class OpenAILLMClientTests(unittest.TestCase):
 
         schema = client.responses.calls[0]["text"]["format"]["schema"]
         self.assertNotIn("propertyNames", json.dumps(schema))
+
+    def test_create_structured_response_records_usage_and_web_search_calls(self) -> None:
+        state = InMemoryAdapter()
+        client = FakeOpenAIClient(
+            {"option": "A"},
+            usage=SimpleNamespace(
+                input_tokens=2_000,
+                output_tokens=1_000,
+                total_tokens=3_000,
+                input_tokens_details=SimpleNamespace(cached_tokens=500),
+            ),
+            response_output=[SimpleNamespace(type="web_search_call")],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "prompt.md"
+            prompt_path.write_text("Return JSON.", encoding="utf-8")
+
+            OpenAILLMClient(client=client, model="gpt-5.4-mini", state=state).create_structured_response(
+                prompt_path=prompt_path,
+                payload={},
+                response_model=ExampleOutput,
+                schema_name="example_output",
+                max_output_tokens=50,
+                tools=({"type": "web_search"},),
+                use_case="publish_question",
+                usecase_run_id="publish-run",
+            )
+
+        ai_call = next(iter(state.ai_calls.values()))
+        self.assertEqual(ai_call.input_tokens, 2_000)
+        self.assertEqual(ai_call.cached_input_tokens, 500)
+        self.assertEqual(ai_call.output_tokens, 1_000)
+        self.assertEqual(ai_call.total_tokens, 3_000)
+        self.assertEqual(ai_call.web_search_calls, 1)
 
     def test_create_structured_response_can_enable_web_search(self) -> None:
         client = FakeOpenAIClient({"option": "A"})

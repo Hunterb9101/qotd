@@ -158,8 +158,10 @@ class AICall:
     error_message: str | None = None
     latency_ms: int | None = None
     input_tokens: int | None = None
+    cached_input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    web_search_calls: int | None = None
 
 
 @dataclass(frozen=True)
