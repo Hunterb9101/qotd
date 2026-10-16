@@ -24,7 +24,6 @@ from qotd.external.web_search.core import (
     is_valid_web_search_result,
 )
 from qotd.usecases.discover_question_topic import discover_question_topic_from_web
-from qotd.usecases.repair_question import QuestionRepairer
 
 
 DEFAULT_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "generate_question_for_topic.md"
@@ -287,22 +286,10 @@ def _rejection_summary(attempt: int, issues: tuple[str, ...]) -> str:
     return f"attempt {attempt}: " + "; ".join(issues)
 
 
-def _mark_unchanged_repair_issues(
-    issues: tuple[str, ...],
-    repaired_issues: tuple[str, ...] | None,
-) -> tuple[str, ...]:
-    """Make a rejected repair explicit when it did not resolve any reported issue."""
-
-    if repaired_issues is not None and issues == repaired_issues:
-        return ("repair returned a candidate with unchanged issues: " + "; ".join(issues),)
-    return issues
-
-
 def generate_question_samples(
     config: GenerateQuestionSamplesConfig,
     *,
     generate_question: QuestionGenerator,
-    repair_question: QuestionRepairer | None = None,
     evaluate_question: QuestionEvaluator | None = None,
 ) -> tuple[GeneratedQuestionCandidate, ...]:
     """Generate reviewable candidates without sending or persisting them."""
@@ -329,26 +316,19 @@ def generate_question_samples(
             lenses=lenses,
         )
         rejection_reasons: list[str] = []
-        candidate: GeneratedQuestionCandidate | None = None
         issues: tuple[str, ...] = ()
         for attempt in range(1, config.attempts + 1):
-            repaired_issues: tuple[str, ...] | None = None
             try:
-                if candidate is not None and repair_question is not None:
-                    repaired_issues = issues
-                    candidate = repair_question(candidate, issues)
-                else:
-                    candidate = generate_question(
-                        topic,
-                        category,
-                        config.game_date,
-                        (),
-                        tuple(rejection_reasons),
-                    )
+                candidate = generate_question(
+                    topic,
+                    category,
+                    config.game_date,
+                    (),
+                    tuple(rejection_reasons),
+                )
             except ValueError as exc:
                 issues = (str(exc),)
                 rejection_reasons.append(_rejection_summary(attempt, issues))
-                candidate = None
                 continue
             issues = _candidate_issues(
                 candidate,
@@ -356,10 +336,7 @@ def generate_question_samples(
                 evaluate_question=evaluate_question,
             )
             if issues:
-                issues = _mark_unchanged_repair_issues(issues, repaired_issues)
                 rejection_reasons.append(_rejection_summary(attempt, issues))
-                if repair_question is None or repaired_issues is not None:
-                    candidate = None
                 continue
             candidates.append(candidate)
             break
@@ -482,7 +459,6 @@ def generate_researched_question(
     *,
     search_client: WebSearchClient,
     generate_question: QuestionGenerator,
-    repair_question: QuestionRepairer | None = None,
     evaluate_question: QuestionEvaluator | None = None,
     alert_organizer: FailureAlert | None = None,
 ) -> ResearchedQuestionResult:
@@ -496,46 +472,38 @@ def generate_researched_question(
     usecase_run_id = config.usecase_run_id or new_id()
     search_client = _with_usecase_run_id(search_client, usecase_run_id)
     generate_question = _with_usecase_run_id(generate_question, usecase_run_id)
-    repair_question = _with_usecase_run_id(repair_question, usecase_run_id)
     evaluate_question = _with_usecase_run_id(evaluate_question, usecase_run_id)
     seed = config.seed if config.seed is not None else config.game_date.isoformat()
     category = choose_category(config.categories, seed=seed)
     lenses = choose_lens_pairs(1, seed=seed)[0]
     rejection_reasons: list[str] = []
-    candidate: GeneratedQuestionCandidate | None = None
     research_evidence: tuple[WebSearchResult, ...] = ()
     issues: tuple[str, ...] = ()
     for attempt in range(1, config.attempts + 1):
-        repaired_issues: tuple[str, ...] | None = None
         try:
-            if candidate is not None and repair_question is not None:
-                repaired_issues = issues
-                candidate = repair_question(candidate, issues)
-            else:
-                discovered = discover_question_topic_from_web(
-                    search_client,
-                    category=category,
-                    game_date=config.game_date,
-                    lenses=lenses,
-                    limit=config.search_result_limit,
-                    seed=seed,
-                )
-                if discovered is None:
-                    issues = ("search returned no viable evidence",)
-                    rejection_reasons.append(_rejection_summary(attempt, issues))
-                    continue
-                research_evidence = discovered.evidence
-                candidate = generate_question(
-                    discovered.topic,
-                    category,
-                    config.game_date,
-                    research_evidence,
-                    tuple(rejection_reasons),
-                )
+            discovered = discover_question_topic_from_web(
+                search_client,
+                category=category,
+                game_date=config.game_date,
+                lenses=lenses,
+                limit=config.search_result_limit,
+                seed=seed,
+            )
+            if discovered is None:
+                issues = ("search returned no viable evidence",)
+                rejection_reasons.append(_rejection_summary(attempt, issues))
+                continue
+            research_evidence = discovered.evidence
+            candidate = generate_question(
+                discovered.topic,
+                category,
+                config.game_date,
+                research_evidence,
+                tuple(rejection_reasons),
+            )
         except ValueError as exc:
             issues = (str(exc),)
             rejection_reasons.append(_rejection_summary(attempt, issues))
-            candidate = None
             continue
         validator: CandidateValidator
         if research_evidence:
@@ -551,10 +519,7 @@ def generate_researched_question(
             evaluate_question=evaluate_question,
         )
         if issues:
-            issues = _mark_unchanged_repair_issues(issues, repaired_issues)
             rejection_reasons.append(_rejection_summary(attempt, issues))
-            if repair_question is None or repaired_issues is not None:
-                candidate = None
             continue
         return ResearchedQuestionResult(candidate, attempt, tuple(rejection_reasons))
 
