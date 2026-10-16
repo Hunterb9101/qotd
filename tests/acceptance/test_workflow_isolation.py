@@ -17,7 +17,7 @@ from qotd.usecases.score_submissions import ScoreResponsesConfig, score_response
 from tests.acceptance.harness.mailbox import InMemoryMailbox
 
 
-@pytest.mark.requirements("6.3", "6.7", "6.22", "6.23")
+@pytest.mark.behavior("workflow-isolation")
 def test_player_submission_and_organizer_instruction_are_processed_by_their_own_workflows() -> None:
     """Player Submissions and Organizer Instructions stay inside their Requirements Boundaries."""
 

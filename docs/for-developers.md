@@ -49,11 +49,17 @@ Samples draw from the defined trivia categories without repeating one until the 
 
 ## Tests
 
-Run the offline test suite with:
+Install development dependencies, then run the offline test suite and lint:
 
 ```bash
+python -m pip install -r requirements-dev.txt
+python -m ruff check qotd tests
 python -m pytest tests/
 ```
+
+Every tagged Gherkin Feature in `behaviors/` must have at least one pytest
+`behavior` marker, and every marker must reference a Feature tag. The offline
+test suite enforces that traceability.
 
 Live Answer-interpreter evaluations are in `tests/usecases/test_score_submissions.py`. They use the `intg` pytest marker and run only when explicitly selected:
 
@@ -101,7 +107,4 @@ GitHub Actions runs this same dry-run validation automatically for every push to
 
 - [Technical notes](technical-notes.md)
 - [Tone guidelines](qotd_tone_guidelines.md)
-- [Game lifecycle](game-lifecycle.md)
-- [Architecture decision: automatic sending](adr/adr-001-auto-send.md)
-- [Architecture decision: deterministic behavioral testing](adr/adr-007-deterministic-behavioral-testing.md)
-- [Initial product requirements](prd/prd-initial.md)
+- [Behavior specifications](../behaviors/)
