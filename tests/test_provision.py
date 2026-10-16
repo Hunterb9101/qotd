@@ -16,6 +16,17 @@ RESET_SQL_PATH = SQL_DIRECTORY / "002_reset_legacy_state.sql"
 RESET_SQL = RESET_SQL_PATH.read_text().lower() if RESET_SQL_PATH.exists() else None
 
 TABLE_FIELDS = {
+    "ai_calls": {
+        "id", "use_case", "prompt", "usecase_run_id", "provider", "model", "request", "response",
+        "provider_request_id", "status", "error_type", "error_message", "started_at", "completed_at",
+        "latency_ms", "input_tokens", "cached_input_tokens", "output_tokens", "total_tokens",
+        "web_search_calls",
+    },
+    "ai_pricing_rates": {
+        "provider", "model", "effective_at", "input_cost_per_million_tokens",
+        "cached_input_cost_per_million_tokens", "output_cost_per_million_tokens",
+        "web_search_call_cost_usd",
+    },
     "series": {"id", "name", "starts_on", "ends_on", "created_at", "updated_at"},
     "players": {"id", "email", "nickname"},
     "games": {
@@ -68,6 +79,13 @@ def test_scoreboard_is_a_view_derived_from_submissions_and_score_events() -> Non
     assert "from `{{project_id}}.{{dataset_id}}.submissions`" in SQL
     assert "left join `{{project_id}}.{{dataset_id}}.score_events`" in SQL
     assert "coalesce(sum(score_events.points_delta), 0) as score" in SQL
+
+
+def test_ai_call_costs_is_derived_from_usage_and_versioned_pricing() -> None:
+    assert "create or replace view ai_call_costs" in SQL
+    assert "from `{{project_id}}.{{dataset_id}}.ai_calls` as ai_calls" in SQL
+    assert "left join `{{project_id}}.{{dataset_id}}.ai_pricing_rates` as rates" in SQL
+    assert "estimated_cost_usd" in SQL
 
 
 @pytest.mark.skipif(
