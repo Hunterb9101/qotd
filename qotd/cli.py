@@ -28,7 +28,6 @@ from qotd.usecases.score_submissions import (
 from qotd.usecases.get_question_history import MissingQuestionError
 from qotd.usecases.send_question import SendQuestionConfig, send_question
 from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
-from qotd.usecases.repair_question import RepairGeneratedQuestion
 from qotd.usecases.generate_question import (
     GenerateQuestionSamplesConfig,
     GenerateResearchedQuestionConfig,
@@ -253,7 +252,6 @@ def main() -> None:
                 GenerateResearchedQuestionConfig(game_date=game_date),
                 search_client=LLMTopicDiscoverer(llm_client=topic_discovery_client),
                 generate_question=llm_generator,
-                repair_question=RepairGeneratedQuestion(llm_client=llm_client),
                 evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
             ).candidate.question
 
@@ -306,7 +304,6 @@ def main() -> None:
                 llm_client=llm_client,
                 use_web_search=True,
             ),
-            repair_question=RepairGeneratedQuestion(llm_client=llm_client),
             evaluate_question=LLMQuestionEvaluator(llm_client=llm_client),
         )
         print(json.dumps({"topic": args.topic, "candidates": [asdict(item) for item in candidates]}, indent=2))
