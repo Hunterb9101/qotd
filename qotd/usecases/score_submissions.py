@@ -189,7 +189,7 @@ def collect_recent_submissions(
     *, state: CanonicalState, fetch_messages: MessageFetcher, scoring_day: date, sender: str,
     collected_at: datetime,
 ) -> None:
-    """Run the ADR-006 audit collection pass for the current and preceding Series."""
+    """Collect recent late Submissions for the current and preceding Series."""
 
     current_start = scoring_day.replace(day=1)
     preceding_start = (current_start - timedelta(days=1)).replace(day=1)

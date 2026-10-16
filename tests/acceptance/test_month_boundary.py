@@ -43,7 +43,7 @@ def _send_config(
     )
 
 
-@pytest.mark.requirements("6.20", "6.21", "6.25")
+@pytest.mark.behavior("monthly-series")
 def test_final_weekday_announces_tied_winners_and_starts_next_series() -> None:
     final_august_day = date(2026, 8, 31)
     first_september_day = date(2026, 9, 1)
