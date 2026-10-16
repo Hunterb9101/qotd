@@ -15,7 +15,6 @@ from qotd.usecases.generate_question import (
     validate_researched_candidate,
 )
 from qotd.usecases.discover_question_topic import LLMTopicDiscoverer
-from qotd.usecases.repair_question import RepairGeneratedQuestion
 
 
 class FakeWebSearchClient:
@@ -48,8 +47,6 @@ class RecordingLLM:
                 "approved": self.evaluation_count > 1,
                 "rejection_reasons": [] if self.evaluation_count > 1 else ["Make the wording clearer"],
             })
-        if schema_name == "qotd_repaired_question":
-            return model.model_validate(_repaired_question_payload())
         raise AssertionError(f"Unexpected schema: {schema_name}")
 
 
@@ -61,15 +58,6 @@ def _generated_question_payload() -> dict[str, object]:
         "correct_option": "C",
         "source_note": "NASA facts",
         "sources": [{"url": "https://example.com/mars", "evidence": "Mars is the Red Planet."}],
-    }
-
-
-def _repaired_question_payload() -> dict[str, object]:
-    return {
-        "prompt": "Which planet is called the Red Planet?",
-        "options": {"A": "Venus", "B": "Jupiter", "C": "Mars", "D": "Mercury"},
-        "correct_option": "C",
-        "source_note": "NASA facts",
     }
 
 
@@ -110,7 +98,6 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
             ),
             search_client=LLMTopicDiscoverer(llm_client=llm),
             generate_question=LLMQuestionGenerator(llm_client=llm),
-            repair_question=RepairGeneratedQuestion(llm_client=llm),
             evaluate_question=LLMQuestionEvaluator(llm_client=llm),
         )
 
@@ -120,7 +107,8 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
                 "discover_question_topics",
                 "generate_question_for_topic",
                 "evaluate_generated_question",
-                "repair_generated_question",
+                "discover_question_topics",
+                "generate_question_for_topic",
                 "evaluate_generated_question",
             ],
         )
@@ -228,83 +216,6 @@ class ResearchedQuestionGenerationTests(unittest.TestCase):
         self.assertIn("does not support", result.rejection_reasons[0])
         self.assertEqual(len(generated_reasons), 2)
         self.assertTrue(generated_reasons[1])
-
-    def test_whole_flow_retries_after_llm_quality_rejection(self) -> None:
-        search = FakeWebSearchClient([(evidence(),), (evidence(),)])
-        evaluations = iter((("The wording gives away Wisconsin.",), ()))
-        generated_candidates: list[GeneratedQuestionCandidate] = []
-        repair_calls: list[tuple[GeneratedQuestionCandidate, tuple[str, ...]]] = []
-
-        def generate(topic, category, game_date, results, reasons):
-            candidate = candidate_for(topic, category, game_date)
-            generated_candidates.append(candidate)
-            return candidate
-
-        def repair(candidate, issues):
-            repair_calls.append((candidate, issues))
-            return candidate
-
-        result = generate_researched_question(
-            GenerateResearchedQuestionConfig(
-                date(2026, 7, 10),
-                categories=("Food",),
-                attempts=2,
-            ),
-            search_client=search,
-            generate_question=generate,
-            repair_question=repair,
-            evaluate_question=lambda candidate: next(evaluations),
-        )
-
-        self.assertEqual(result.attempts_used, 2)
-        self.assertIn("gives away", result.rejection_reasons[0])
-        self.assertEqual(len(search.calls), 1)
-        self.assertEqual(len(generated_candidates), 1)
-        self.assertEqual(repair_calls[0][0], generated_candidates[0])
-        self.assertEqual(repair_calls[0][1], ("The wording gives away Wisconsin.",))
-
-    def test_whole_flow_regenerates_when_repair_leaves_answer_leakage_unchanged(self) -> None:
-        search = FakeWebSearchClient([(evidence(),), (evidence(),)])
-        generated_candidates: list[GeneratedQuestionCandidate] = []
-        repair_calls: list[tuple[GeneratedQuestionCandidate, tuple[str, ...]]] = []
-
-        def generate(topic, category, game_date, results, reasons):
-            candidate = candidate_for(topic, category, game_date)
-            if not generated_candidates:
-                candidate = GeneratedQuestionCandidate(
-                    question=Question(
-                        game_date=candidate.question.game_date,
-                        prompt="Why is Wisconsin the biggest cheese producer?",
-                        options=candidate.question.options,
-                        correct_option=candidate.question.correct_option,
-                        source_note=candidate.question.source_note,
-                        source_url=candidate.question.source_url,
-                    ),
-                    topic_source=candidate.topic_source,
-                    category=candidate.category,
-                    topic=candidate.topic,
-                    source_urls=candidate.source_urls,
-                    source_evidence=candidate.source_evidence,
-                )
-            generated_candidates.append(candidate)
-            return candidate
-
-        def repair(candidate, issues):
-            repair_calls.append((candidate, issues))
-            return candidate
-
-        result = generate_researched_question(
-            GenerateResearchedQuestionConfig(date(2026, 7, 10), categories=("Food",), attempts=3),
-            search_client=search,
-            generate_question=generate,
-            repair_question=repair,
-        )
-
-        self.assertEqual(result.attempts_used, 3)
-        self.assertEqual(len(generated_candidates), 2)
-        self.assertEqual(len(repair_calls), 1)
-        self.assertEqual(repair_calls[0][1], ("question prompt leaks the correct answer",))
-        self.assertIn("repair returned a candidate with unchanged issues", result.rejection_reasons[1])
 
     def test_exhaustion_alerts_and_fails_closed(self) -> None:
         search = FakeWebSearchClient([()])

@@ -10,7 +10,6 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from qotd.external.llm.openai import OpenAILLMClient, render_prompt
-from qotd.usecases.repair_question import RepairedQuestionOutput
 from qotd.external.storage.memory import InMemoryAdapter
 
 
@@ -88,32 +87,6 @@ class OpenAILLMClientTests(unittest.TestCase):
         self.assertEqual(ai_call.provider, "openai")
         self.assertEqual(ai_call.model, "test-model")
         self.assertIsNotNone(ai_call.latency_ms)
-
-    def test_repaired_question_schema_avoids_unsupported_property_names(self) -> None:
-        client = FakeOpenAIClient(
-            {
-                "prompt": "Which planet is known as the Red Planet?",
-                "options": {"A": "Mars", "B": "Venus", "C": "Jupiter", "D": "Mercury"},
-                "correct_option": "A",
-                "source_note": "NASA",
-            }
-        )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            prompt_path = Path(temp_dir) / "prompt.md"
-            prompt_path.write_text("Return JSON.", encoding="utf-8")
-
-            OpenAILLMClient(client=client, model="test-model", state=InMemoryAdapter()).create_structured_response(
-                prompt_path=prompt_path,
-                payload={},
-                response_model=RepairedQuestionOutput,
-                schema_name="qotd_repaired_question",
-                max_output_tokens=50,
-                use_case="publish_question",
-                usecase_run_id="publish-run",
-            )
-
-        schema = client.responses.calls[0]["text"]["format"]["schema"]
-        self.assertNotIn("propertyNames", json.dumps(schema))
 
     def test_create_structured_response_can_enable_web_search(self) -> None:
         client = FakeOpenAIClient({"option": "A"})
