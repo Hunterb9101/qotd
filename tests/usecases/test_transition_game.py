@@ -361,6 +361,7 @@ def test_same_time_submissions_use_source_message_key_as_a_stable_tie_breaker() 
     assert state.submissions[second.id].is_eligible
 
 
+@pytest.mark.behavior("operational-state")
 def test_scoring_a_game_twice_does_not_duplicate_automatic_score_events() -> None:
     state = InMemoryAdapter()
     game_day = date(2026, 8, 10)

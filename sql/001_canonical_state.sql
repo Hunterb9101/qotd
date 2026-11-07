@@ -1,4 +1,4 @@
--- Canonical operational state for QOTD (ADR-004).
+-- Canonical operational state for QOTD.
 -- This script is executed with the target QOTD dataset as its default dataset.
 
 CREATE TABLE IF NOT EXISTS series (

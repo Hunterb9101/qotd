@@ -4,7 +4,7 @@ This document describes the operational data QOTD currently persists, the
 access boundaries needed to operate it, and the decisions that the Organizer
 must make before treating the system as a long-lived production service. It
 uses the canonical-state model in
-[ADR-004](adr/adr-004-canonical-state-model.md); it does not replace the
+[operational-state behavior](../behaviors/operational-state.feature); it does not replace the
 [Definitions](DEFINITIONS.md).
 
 ## Scope and current behavior

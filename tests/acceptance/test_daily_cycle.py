@@ -45,20 +45,7 @@ def _send_config(
     )
 
 
-@pytest.mark.requirements(
-    "6.2",
-    "6.3",
-    "6.4",
-    "6.5",
-    "6.6",
-    "6.7",
-    "6.12",
-    "6.13",
-    "6.14",
-    "6.15",
-    "6.19",
-    "6.25",
-)
+@pytest.mark.behavior("daily-game-cycle")
 def test_automated_daily_game_cycle_scores_submissions_and_recaps_results() -> None:
     game_day = date(2026, 8, 10)
     scoring_day = date(2026, 8, 11)

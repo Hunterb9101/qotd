@@ -52,7 +52,7 @@ def _generated_question(game_day: date, _state: object) -> Question:
     )
 
 
-@pytest.mark.requirements("6.16", "6.18")
+@pytest.mark.behavior("manual-publication")
 def test_manual_question_suppresses_generated_publication() -> None:
     state = InMemoryAdapter()
     generated = False
@@ -96,7 +96,7 @@ def test_manual_question_suppresses_generated_publication() -> None:
     assert intents[0].source_message_key == gmail_message_key("manual-question")
 
 
-@pytest.mark.requirements("6.17")
+@pytest.mark.behavior("outbound-recovery")
 def test_uncertain_publication_is_reconciled_without_duplicate_delivery() -> None:
     state = InMemoryAdapter()
     config = _config(state)

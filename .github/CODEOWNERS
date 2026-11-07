@@ -1,0 +1,6 @@
+# The control plane defines what automated reviewers may enforce and how they run.
+/AGENTS.md @Hunterb9101
+/behaviors/ @Hunterb9101
+/.github/ @Hunterb9101
+/pyproject.toml @Hunterb9101
+/requirements*.txt @Hunterb9101

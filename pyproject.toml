@@ -20,5 +20,11 @@ addopts = "-m 'not intg'"
 testpaths = ["tests"]
 markers = [
     "intg: live integration tests that require external credentials",
-    "requirements(*ids): PRD requirement identifiers covered by a behavioral test",
+    "behavior(*ids): behavior specification identifiers covered by a behavioral test",
 ]
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E9", "F"]
