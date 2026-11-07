@@ -191,6 +191,31 @@ class OpenAILLMClientTests(unittest.TestCase):
         self.assertEqual(ai_call.error_message, "provider unavailable")
         self.assertIsNone(ai_call.response)
 
+    @pytest.mark.behavior("ai-call-usage")
+    def test_create_structured_response_normalizes_string_token_usage(self) -> None:
+        state = InMemoryAdapter()
+        client = FakeOpenAIClient(
+            {"option": "A"},
+            usage=SimpleNamespace(input_tokens="101", output_tokens="22", total_tokens="123"),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "prompt.md"
+            prompt_path.write_text("Return JSON.", encoding="utf-8")
+
+            result = OpenAILLMClient(client=client, model="test-model", state=state).create_structured_response(
+                prompt_path=prompt_path,
+                payload={},
+                response_model=ExampleOutput,
+                schema_name="example_output",
+                max_output_tokens=50,
+                use_case="publish_question",
+                usecase_run_id="publish-run",
+            )
+
+        ai_call = next(iter(state.ai_calls.values()))
+        self.assertEqual(result.option, "A")
+        self.assertEqual((ai_call.input_tokens, ai_call.output_tokens, ai_call.total_tokens), (101, 22, 123))
+
 
 if __name__ == "__main__":
     unittest.main()

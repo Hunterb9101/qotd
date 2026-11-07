@@ -91,11 +91,26 @@ def _usage(response: Any) -> dict[str, int | None]:
     usage = getattr(response, "usage", None)
     input_token_details = getattr(usage, "input_tokens_details", None)
     return {
-        "input_tokens": getattr(usage, "input_tokens", None),
-        "cached_input_tokens": getattr(input_token_details, "cached_tokens", None),
-        "output_tokens": getattr(usage, "output_tokens", None),
-        "total_tokens": getattr(usage, "total_tokens", None),
+        "input_tokens": _usage_count(getattr(usage, "input_tokens", None)),
+        "cached_input_tokens": _usage_count(getattr(input_token_details, "cached_tokens", None)),
+        "output_tokens": _usage_count(getattr(usage, "output_tokens", None)),
+        "total_tokens": _usage_count(getattr(usage, "total_tokens", None)),
     }
+
+
+def _usage_count(value: Any) -> int | None:
+    """Normalize provider token counts for the canonical AI Call record."""
+
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _web_search_call_count(response: Any) -> int:
