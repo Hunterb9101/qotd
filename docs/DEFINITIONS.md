@@ -36,7 +36,15 @@ of a [**Game**](#game) and governs its scheduled workflow times.
 An append-only durable record of one request sent to an AI provider and its
 result. An AI Call records its [**Use Case Run**](#use-case-run), prompt,
 provider request and response (without credentials), provider and model,
-status or error, and available timing and usage metadata.
+status or error, and available timing and usage metadata. Its estimated cost is
+derived from the applicable [**AI Pricing Rate**](#ai-pricing-rate); it is not
+an invoice.
+
+#### AI Pricing Rate
+
+An effective-dated provider and model price used to estimate the cost of an
+[**AI Call**](#ai-call) from its recorded usage. A rate is retained so an
+estimate can be recalculated and audited after provider pricing changes.
 
 #### Use Case Run
 
